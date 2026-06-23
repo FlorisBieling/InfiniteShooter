@@ -7,13 +7,7 @@ public sealed class GameBootstrap : MonoBehaviour
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void StartGame()
     {
-        if (FindFirstObjectByType<GameWorld>() != null)
-        {
-            return;
-        }
-
-        GameObject root = new GameObject("Top Down Survivor");
-        root.AddComponent<GameWorld>();
+        // The expanded prototype is started by AdvancedGameBootstrap.
     }
 }
 
