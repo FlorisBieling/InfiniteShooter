@@ -16,5 +16,11 @@ Een 2D top-down survivor shooter die zichzelf opbouwt zodra je op Play drukt.
 - Versla enemies voor XP. Bij elk level kies je 1 van 3 upgrades.
 - Enemies droppen XP pickups en soms health.
 - Je verdient upgrade points via waves, bosses en salvage drops.
+- De arena heeft gebouwen en muren waar player, enemies en bullets niet doorheen kunnen.
 
 De game spawnt elke 30 seconden een nieuwe wave. Elke wave bevat meer enemies en enemies worden geleidelijk sterker. Elke 5 waves verschijnt een boss.
+
+## Asset Store art
+
+Asset Store packs moeten eerst via Unity zelf worden geimporteerd: `Window > Package Manager > My Assets`.
+Daarna kunnen de sprites/tiles uit het pakket aan de gameplay gekoppeld worden.

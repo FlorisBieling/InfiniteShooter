@@ -28,6 +28,7 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     private readonly List<AdvancedEnemyController> enemies = new List<AdvancedEnemyController>();
     private readonly List<AdvancedUpgradeOption> levelChoices = new List<AdvancedUpgradeOption>();
     private readonly List<AdvancedPermanentUpgrade> permanentUpgrades = new List<AdvancedPermanentUpgrade>();
+    private readonly List<Rect> solidRects = new List<Rect>();
 
     private Transform sceneryRoot;
     private Transform enemyRoot;
@@ -134,6 +135,7 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     {
         enemies.Clear();
         levelChoices.Clear();
+        solidRects.Clear();
         wave = 0;
         level = 1;
         xp = 0;
@@ -233,26 +235,8 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
             CreateLine("Grid H " + i, grid, new Vector3(0f, i, 0f), new Vector3(100f, 0.025f, 1f));
         }
 
-        for (int i = 0; i < 90; i++)
-        {
-            float px = PseudoRandom(i, 11) * 92f - 46f;
-            float py = PseudoRandom(i, 23) * 92f - 46f;
-            if (new Vector2(px, py).sqrMagnitude < 42f)
-            {
-                continue;
-            }
-
-            bool crystal = PseudoRandom(i, 37) > 0.62f;
-            GameObject prop = new GameObject(crystal ? "Glow Crystal" : "Space Rock");
-            prop.transform.SetParent(sceneryRoot);
-            prop.transform.position = new Vector3(px, py, -0.02f);
-            prop.transform.localScale = Vector3.one * (crystal ? Mathf.Lerp(0.55f, 1.25f, PseudoRandom(i, 41)) : Mathf.Lerp(0.7f, 1.8f, PseudoRandom(i, 43)));
-            prop.transform.rotation = Quaternion.Euler(0f, 0f, PseudoRandom(i, 47) * 360f);
-
-            SpriteRenderer renderer = prop.AddComponent<SpriteRenderer>();
-            renderer.sprite = crystal ? AdvancedGameArt.CrystalSprite() : AdvancedGameArt.RockSprite();
-            renderer.sortingOrder = -20;
-        }
+        CreateCityLayout();
+        CreateFloorDetails();
     }
 
     private void CreateLine(string name, Sprite sprite, Vector3 position, Vector3 scale)
@@ -264,6 +248,119 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         SpriteRenderer renderer = line.AddComponent<SpriteRenderer>();
         renderer.sprite = sprite;
         renderer.sortingOrder = -40;
+    }
+
+    private void CreateCityLayout()
+    {
+        CreateBuilding("Apartment Block", new Vector2(-15f, 10f), new Vector2(7f, 5f), 0);
+        CreateBuilding("Market Hall", new Vector2(12f, 13f), new Vector2(8f, 4.8f), 1);
+        CreateBuilding("Workshop", new Vector2(-18f, -12f), new Vector2(6.2f, 6.2f), 2);
+        CreateBuilding("Storage House", new Vector2(16f, -10f), new Vector2(7.5f, 5.2f), 3);
+        CreateBuilding("Small House", new Vector2(-5f, 20f), new Vector2(4.5f, 4.2f), 4);
+        CreateBuilding("Small House", new Vector2(3f, -22f), new Vector2(4.8f, 4.4f), 5);
+
+        CreateWall("North Perimeter", new Vector2(0f, 31f), new Vector2(54f, 1.1f));
+        CreateWall("South Perimeter", new Vector2(0f, -31f), new Vector2(54f, 1.1f));
+        CreateWall("West Perimeter", new Vector2(-31f, 0f), new Vector2(1.1f, 54f));
+        CreateWall("East Perimeter", new Vector2(31f, 0f), new Vector2(1.1f, 54f));
+
+        CreateWall("Broken Wall A", new Vector2(-3f, 8f), new Vector2(8f, 0.8f));
+        CreateWall("Broken Wall B", new Vector2(9f, -3f), new Vector2(0.8f, 8f));
+        CreateWall("Broken Wall C", new Vector2(-10f, -2f), new Vector2(0.8f, 6f));
+        CreateWall("Broken Wall D", new Vector2(4f, 8f), new Vector2(4f, 0.8f));
+    }
+
+    private void CreateFloorDetails()
+    {
+        Sprite decalSprite = AdvancedGameArt.SquareSprite(new Color(0.18f, 0.2f, 0.23f, 0.45f));
+        for (int i = 0; i < 55; i++)
+        {
+            Vector2 position = new Vector2(PseudoRandom(i, 61) * 54f - 27f, PseudoRandom(i, 67) * 54f - 27f);
+            if (position.sqrMagnitude < 18f || IsCircleBlocked(position, 0.45f))
+            {
+                continue;
+            }
+
+            GameObject decal = new GameObject("Floor Scuff");
+            decal.transform.SetParent(sceneryRoot);
+            decal.transform.position = new Vector3(position.x, position.y, -0.04f);
+            decal.transform.localScale = new Vector3(Mathf.Lerp(0.5f, 1.4f, PseudoRandom(i, 71)), 0.08f, 1f);
+            decal.transform.rotation = Quaternion.Euler(0f, 0f, PseudoRandom(i, 73) * 360f);
+            SpriteRenderer renderer = decal.AddComponent<SpriteRenderer>();
+            renderer.sprite = decalSprite;
+            renderer.sortingOrder = -18;
+        }
+    }
+
+    private void CreateBuilding(string name, Vector2 center, Vector2 size, int variant)
+    {
+        GameObject building = CreateSolidObject(name, center, size, AdvancedGameArt.BuildingSprite(variant), -10);
+        building.transform.localScale = new Vector3(size.x, size.y, 1f);
+    }
+
+    private void CreateWall(string name, Vector2 center, Vector2 size)
+    {
+        GameObject wall = CreateSolidObject(name, center, size, AdvancedGameArt.WallSprite(), -8);
+        wall.transform.localScale = new Vector3(size.x, size.y, 1f);
+    }
+
+    private GameObject CreateSolidObject(string name, Vector2 center, Vector2 size, Sprite sprite, int sortingOrder)
+    {
+        GameObject solid = new GameObject(name);
+        solid.transform.SetParent(sceneryRoot);
+        solid.transform.position = new Vector3(center.x, center.y, -0.05f);
+
+        SpriteRenderer renderer = solid.AddComponent<SpriteRenderer>();
+        renderer.sprite = sprite;
+        renderer.sortingOrder = sortingOrder;
+
+        BoxCollider2D collider = solid.AddComponent<BoxCollider2D>();
+        collider.size = Vector2.one;
+        collider.isTrigger = false;
+        solid.AddComponent<AdvancedSolidObstacle>();
+
+        solidRects.Add(new Rect(center.x - size.x * 0.5f, center.y - size.y * 0.5f, size.x, size.y));
+        return solid;
+    }
+
+    public Vector2 ResolveMovement(Vector2 currentPosition, Vector2 delta, float radius)
+    {
+        Vector2 result = currentPosition;
+        Vector2 xStep = new Vector2(delta.x, 0f);
+        if (IsCircleBlocked(result + xStep, radius) == false)
+        {
+            result += xStep;
+        }
+
+        Vector2 yStep = new Vector2(0f, delta.y);
+        if (IsCircleBlocked(result + yStep, radius) == false)
+        {
+            result += yStep;
+        }
+
+        return result;
+    }
+
+    public bool IsCircleBlocked(Vector2 center, float radius)
+    {
+        for (int i = 0; i < solidRects.Count; i++)
+        {
+            if (CircleOverlapsRect(center, radius, solidRects[i]))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool CircleOverlapsRect(Vector2 center, float radius, Rect rect)
+    {
+        float closestX = Mathf.Clamp(center.x, rect.xMin, rect.xMax);
+        float closestY = Mathf.Clamp(center.y, rect.yMin, rect.yMax);
+        float dx = center.x - closestX;
+        float dy = center.y - closestY;
+        return dx * dx + dy * dy < radius * radius;
     }
 
     private float PseudoRandom(int index, int salt)
@@ -471,6 +568,11 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
         float distance = kind == AdvancedEnemyKind.Boss ? 15f : UnityEngine.Random.Range(10.5f, 14.5f);
         Vector3 spawnPosition = player.transform.position + (Vector3)(offset * distance);
+        for (int attempt = 0; attempt < 10 && IsCircleBlocked(spawnPosition, kind == AdvancedEnemyKind.Boss ? 1.4f : 0.7f); attempt++)
+        {
+            offset = AdvancedGameMath.Rotate(offset, 41f + attempt * 17f).normalized;
+            spawnPosition = player.transform.position + (Vector3)(offset * (distance + attempt * 0.8f));
+        }
 
         GameObject enemyObject = new GameObject(kind + " Enemy");
         enemyObject.transform.SetParent(enemyRoot);
@@ -1112,7 +1214,9 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
 
         float speed = dashTimer > 0f ? MoveSpeed * 4.3f : MoveSpeed;
         Vector2 direction = dashTimer > 0f ? dashDirection : input;
-        transform.position += (Vector3)(direction * speed * Time.deltaTime);
+        Vector2 currentPosition = transform.position;
+        Vector2 nextPosition = world.ResolveMovement(currentPosition, direction * speed * Time.deltaTime, 0.46f);
+        transform.position = nextPosition;
     }
 
     private void HandleAiming()
@@ -1395,7 +1499,9 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
     {
         if (direction.sqrMagnitude > 0.01f)
         {
-            transform.position += (Vector3)(direction.normalized * speed * Time.deltaTime);
+            Vector2 currentPosition = transform.position;
+            Vector2 nextPosition = world.ResolveMovement(currentPosition, direction.normalized * speed * Time.deltaTime, kind == AdvancedEnemyKind.Boss ? 1.25f : 0.5f);
+            transform.position = nextPosition;
         }
     }
 
@@ -1510,6 +1616,10 @@ internal sealed class AdvancedHealthPickup : MonoBehaviour
     }
 }
 
+internal sealed class AdvancedSolidObstacle : MonoBehaviour
+{
+}
+
 internal sealed class AdvancedBullet : MonoBehaviour
 {
     private bool fromPlayer;
@@ -1539,6 +1649,12 @@ internal sealed class AdvancedBullet : MonoBehaviour
 
     private void OnTriggerEnter2D(Collider2D other)
     {
+        if (other.GetComponent<AdvancedSolidObstacle>() != null)
+        {
+            Destroy(gameObject);
+            return;
+        }
+
         if (fromPlayer)
         {
             AdvancedEnemyController enemy = other.GetComponent<AdvancedEnemyController>();
@@ -1781,6 +1897,51 @@ internal static class AdvancedGameArt
     public static Sprite EnemyBulletSprite() { return CircleSprite(Color.white); }
     public static Sprite RockSprite() { return BlockSprite("rock", new Color(0.22f, 0.27f, 0.32f), new Color(0.13f, 0.16f, 0.2f)); }
     public static Sprite CrystalSprite() { return DiamondSprite("crystal", new Color(0.22f, 0.8f, 1f, 0.86f), new Color(0.75f, 1f, 1f, 0.92f)); }
+
+    public static Sprite WallSprite()
+    {
+        return TwoToneSprite("wall-v1", new Color(0.35f, 0.37f, 0.39f), new Color(0.16f, 0.17f, 0.19f), (x, y) => Mathf.Abs(x) < 0.9f && Mathf.Abs(y) < 0.42f, (x, y) => Mathf.Abs(y) > 0.24f || Mathf.Abs(x) > 0.72f);
+    }
+
+    public static Sprite BuildingSprite(int variant)
+    {
+        string key = "building-v2-" + variant;
+        Sprite sprite;
+        if (SpriteCache.TryGetValue(key, out sprite)) return sprite;
+
+        Color roof = variant % 2 == 0 ? new Color(0.22f, 0.26f, 0.31f) : new Color(0.26f, 0.23f, 0.2f);
+        Color trim = new Color(0.1f, 0.115f, 0.135f);
+        Color window = new Color(0.78f, 0.7f, 0.48f, 0.85f);
+
+        Texture2D texture = TransparentTexture(64);
+        for (int y = 0; y < 64; y++)
+        {
+            for (int x = 0; x < 64; x++)
+            {
+                float nx = (x + 0.5f) / 64f * 2f - 1f;
+                float ny = (y + 0.5f) / 64f * 2f - 1f;
+                Color pixel = new Color(0f, 0f, 0f, 0f);
+
+                bool body = Mathf.Abs(nx) < 0.88f && Mathf.Abs(ny) < 0.78f;
+                bool trimMask = Mathf.Abs(nx) > 0.72f || Mathf.Abs(ny) > 0.62f;
+                bool roofStripe = Mathf.Abs(ny + 0.02f) < 0.035f || Mathf.Abs(nx + 0.02f) < 0.035f;
+                bool windows = Mathf.Abs(nx) < 0.62f && Mathf.Abs(ny) < 0.48f
+                    && Mathf.Repeat((nx + 1f) * 4.2f, 1f) < 0.28f
+                    && Mathf.Repeat((ny + 1f) * 3.4f, 1f) < 0.24f;
+
+                if (body) pixel = roof;
+                if (body && roofStripe) pixel = new Color(roof.r * 0.72f, roof.g * 0.72f, roof.b * 0.72f, 1f);
+                if (body && trimMask) pixel = trim;
+                if (body && windows) pixel = window;
+                texture.SetPixel(x, y, pixel);
+            }
+        }
+
+        texture.Apply();
+        sprite = Sprite.Create(texture, new Rect(0f, 0f, 64f, 64f), new Vector2(0.5f, 0.5f), 64f);
+        SpriteCache[key] = sprite;
+        return sprite;
+    }
 
     public static Sprite HealthSprite()
     {
