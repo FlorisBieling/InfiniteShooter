@@ -39,6 +39,7 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     private AdvancedPlayerController player;
     private AdvancedGameState state;
     private AdvancedGameState upgradeReturnState;
+    private AdvancedPlayerClass selectedClass = AdvancedPlayerClass.Archer;
 
     private float nextWaveTimer;
     private float spawnTimer;
@@ -375,7 +376,7 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         playerObject.transform.position = Vector3.zero;
 
         SpriteRenderer renderer = playerObject.AddComponent<SpriteRenderer>();
-        renderer.sprite = AdvancedGameArt.PlayerSprite();
+        renderer.sprite = AdvancedGameArt.HeroSprite(selectedClass, AdvancedHeroAnimation.Idle, 0);
         renderer.sortingOrder = 10;
 
         CircleCollider2D collider = playerObject.AddComponent<CircleCollider2D>();
@@ -383,7 +384,7 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         collider.isTrigger = true;
 
         player = playerObject.AddComponent<AdvancedPlayerController>();
-        player.Initialize(this);
+        player.Initialize(this, selectedClass);
         ApplyPermanentBonuses(player);
     }
 
@@ -583,17 +584,18 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         enemies.Add(enemy);
     }
 
-    public void SpawnPlayerBullet(Vector2 origin, Vector2 direction, float damage, float speed, int pierce, float sizeMultiplier)
+    public void SpawnPlayerBullet(Vector2 origin, Vector2 direction, float damage, float speed, int pierce, float sizeMultiplier, AdvancedProjectileKind projectileKind = AdvancedProjectileKind.Bullet, float maxDistance = 0f, float explosionRadius = 0f)
     {
-        SpawnBullet("Player Bullet", true, origin, direction, damage, speed, pierce, new Color(0.48f, 0.92f, 1f), 0.18f * sizeMultiplier);
+        Color color = projectileKind == AdvancedProjectileKind.Magic ? new Color(0.78f, 0.42f, 1f) : new Color(0.9f, 0.82f, 0.55f);
+        SpawnBullet("Player Bullet", true, origin, direction, damage, speed, pierce, color, 0.18f * sizeMultiplier, projectileKind, maxDistance, explosionRadius);
     }
 
     public void SpawnEnemyBullet(Vector2 origin, Vector2 direction, float damage, float speed)
     {
-        SpawnBullet("Enemy Bullet", false, origin, direction, damage, speed, 0, new Color(1f, 0.28f, 0.55f), 0.22f);
+        SpawnBullet("Enemy Bullet", false, origin, direction, damage, speed, 0, new Color(1f, 0.28f, 0.55f), 0.22f, AdvancedProjectileKind.Bullet, 0f, 0f);
     }
 
-    private void SpawnBullet(string name, bool fromPlayer, Vector2 origin, Vector2 direction, float damage, float speed, int pierce, Color color, float size)
+    private void SpawnBullet(string name, bool fromPlayer, Vector2 origin, Vector2 direction, float damage, float speed, int pierce, Color color, float size, AdvancedProjectileKind projectileKind, float maxDistance, float explosionRadius)
     {
         if (direction.sqrMagnitude < 0.01f)
         {
@@ -606,7 +608,7 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         bulletObject.transform.localScale = Vector3.one * size;
 
         SpriteRenderer renderer = bulletObject.AddComponent<SpriteRenderer>();
-        renderer.sprite = fromPlayer ? AdvancedGameArt.PlayerBulletSprite() : AdvancedGameArt.EnemyBulletSprite();
+        renderer.sprite = fromPlayer ? AdvancedGameArt.PlayerProjectileSprite(projectileKind) : AdvancedGameArt.EnemyBulletSprite();
         renderer.color = color;
         renderer.sortingOrder = fromPlayer ? 12 : 8;
 
@@ -619,7 +621,63 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         body.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
 
         AdvancedBullet bullet = bulletObject.AddComponent<AdvancedBullet>();
-        bullet.Initialize(fromPlayer, direction.normalized, damage, speed, pierce);
+        bullet.Initialize(fromPlayer, direction.normalized, damage, speed, pierce, projectileKind, maxDistance, explosionRadius);
+    }
+
+    public void PerformPlayerMelee(Vector2 origin, Vector2 direction, float range, float arcDegrees, float damage)
+    {
+        bool hitSomething = false;
+        for (int i = enemies.Count - 1; i >= 0; i--)
+        {
+            AdvancedEnemyController enemy = enemies[i];
+            if (enemy == null)
+            {
+                continue;
+            }
+
+            Vector2 toEnemy = (Vector2)enemy.transform.position - origin;
+            if (toEnemy.magnitude > range)
+            {
+                continue;
+            }
+
+            if (Vector2.Angle(direction, toEnemy.normalized) > arcDegrees * 0.5f)
+            {
+                continue;
+            }
+
+            enemy.TakeDamage(damage);
+            hitSomething = true;
+        }
+
+        SpawnBurst(origin + direction * Mathf.Min(range, 1.4f), new Color(0.86f, 0.92f, 1f), hitSomething ? 10 : 4);
+        if (cameraFollow != null)
+        {
+            cameraFollow.Shake(hitSomething ? 0.16f : 0.06f);
+        }
+    }
+
+    public void DamageEnemiesInRadius(Vector2 origin, float radius, float damage)
+    {
+        for (int i = enemies.Count - 1; i >= 0; i--)
+        {
+            AdvancedEnemyController enemy = enemies[i];
+            if (enemy == null)
+            {
+                continue;
+            }
+
+            if (Vector2.Distance(origin, enemy.transform.position) <= radius)
+            {
+                enemy.TakeDamage(damage);
+            }
+        }
+
+        SpawnBurst(origin, new Color(0.8f, 0.35f, 1f), 14);
+        if (cameraFollow != null)
+        {
+            cameraFollow.Shake(0.18f);
+        }
     }
 
     public void EnemyKilled(AdvancedEnemyController enemy, int xpReward, Vector3 position, bool isBoss)
@@ -941,13 +999,20 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
     private void DrawMainMenu()
     {
-        Rect panel = CenterRect(560f, 500f);
+        Rect panel = CenterRect(590f, 620f);
         GUI.Box(panel, "");
         GUILayout.BeginArea(new Rect(panel.x + 34f, panel.y + 26f, panel.width - 68f, panel.height - 52f));
         GUILayout.Label("Infinite Shooter", titleStyle, GUILayout.Height(56f));
         GUILayout.Label("Top-down survivor prototype", centeredSmallStyle, GUILayout.Height(26f));
         GUILayout.Space(12f);
         GUILayout.Label("Upgrade points: " + metaPoints, bigNumberStyle, GUILayout.Height(58f));
+        GUILayout.Space(10f);
+        GUILayout.Label("Choose your hero", centeredSmallStyle, GUILayout.Height(24f));
+        GUILayout.BeginHorizontal();
+        DrawClassCard(AdvancedPlayerClass.Archer, "Archer", "Draws a bow and fires piercing arrows.");
+        DrawClassCard(AdvancedPlayerClass.Knight, "Knight", "Armored melee fighter with a wide sword swing.");
+        DrawClassCard(AdvancedPlayerClass.Mage, "Mage", "Shorter range wand blasts that explode.");
+        GUILayout.EndHorizontal();
         GUILayout.Space(10f);
 
         if (GUILayout.Button("Start Run", buttonStyle, GUILayout.Height(58f)))
@@ -970,6 +1035,18 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         GUILayout.Space(16f);
         GUILayout.Label("Controls: WASD move, mouse aim, left click shoot, Space dash, U upgrades, Esc pause.", centeredSmallStyle, GUILayout.Height(60f));
         GUILayout.EndArea();
+    }
+
+    private void DrawClassCard(AdvancedPlayerClass heroClass, string title, string description)
+    {
+        Color oldColor = GUI.backgroundColor;
+        GUI.backgroundColor = selectedClass == heroClass ? new Color(0.42f, 0.74f, 1f) : Color.white;
+        string prefix = selectedClass == heroClass ? "Selected\n" : "";
+        if (GUILayout.Button(prefix + title + "\n" + description, buttonStyle, GUILayout.Height(94f), GUILayout.Width(154f)))
+        {
+            selectedClass = heroClass;
+        }
+        GUI.backgroundColor = oldColor;
     }
 
     private void DrawHud()
@@ -1128,14 +1205,19 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
 {
     private AdvancedGameWorld world;
     private Transform barrel;
+    private SpriteRenderer weaponRenderer;
     private SpriteRenderer spriteRenderer;
+    private AdvancedPlayerClass playerClass;
     private Vector2 aimDirection = Vector2.right;
     private Vector2 dashDirection = Vector2.right;
     private float shotCooldown;
     private float invulnerabilityTimer;
     private float dashTimer;
     private float dashCooldownTimer;
+    private float attackAnimTimer;
+    private float drawTimer;
     private float bulletScale = 1f;
+    private bool isDrawing;
 
     public float MoveSpeed { get; set; }
     public float Damage { get; set; }
@@ -1153,32 +1235,74 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
     public float HealthPercent { get { return MaxHealth <= 0f ? 0f : Mathf.Clamp01(Health / MaxHealth); } }
     public float DashFill { get { return DashCooldown <= 0f ? 1f : 1f - Mathf.Clamp01(dashCooldownTimer / DashCooldown); } }
 
-    public void Initialize(AdvancedGameWorld owner)
+    public void Initialize(AdvancedGameWorld owner, AdvancedPlayerClass heroClass)
     {
         world = owner;
-        MoveSpeed = 5.2f;
-        Damage = 18f;
-        FireDelay = 0.28f;
-        BulletSpeed = 13.5f;
-        MaxHealth = 100f;
+        playerClass = heroClass;
+        ConfigureClassStats(heroClass);
         Health = MaxHealth;
         HealthRegen = 0f;
         MagnetRange = 2.2f;
-        DashCooldown = 2.4f;
         SalvageBonus = 0f;
-        PierceCount = 0;
         MultiShot = 1;
         spriteRenderer = GetComponent<SpriteRenderer>();
+        spriteRenderer.sprite = AdvancedGameArt.HeroSprite(playerClass, AdvancedHeroAnimation.Idle, 0);
 
         GameObject barrelObject = new GameObject("Aim Barrel");
         barrelObject.transform.SetParent(transform);
-        barrelObject.transform.localPosition = new Vector3(0.5f, 0f, -0.01f);
-        barrelObject.transform.localScale = new Vector3(0.82f, 0.16f, 1f);
+        barrelObject.transform.localPosition = new Vector3(0f, 0.54f, -0.01f);
+        barrelObject.transform.localScale = WeaponScale();
 
-        SpriteRenderer barrelRenderer = barrelObject.AddComponent<SpriteRenderer>();
-        barrelRenderer.sprite = AdvancedGameArt.SquareSprite(new Color(1f, 0.76f, 0.26f));
-        barrelRenderer.sortingOrder = 11;
+        weaponRenderer = barrelObject.AddComponent<SpriteRenderer>();
+        weaponRenderer.sprite = AdvancedGameArt.WeaponSprite(playerClass, 0);
+        weaponRenderer.sortingOrder = 11;
         barrel = barrelObject.transform;
+    }
+
+    private void ConfigureClassStats(AdvancedPlayerClass heroClass)
+    {
+        PierceCount = 0;
+        DashCooldown = 2.4f;
+
+        switch (heroClass)
+        {
+            case AdvancedPlayerClass.Knight:
+                MoveSpeed = 4.6f;
+                Damage = 34f;
+                FireDelay = 0.58f;
+                BulletSpeed = 0f;
+                MaxHealth = 140f;
+                DashCooldown = 2.8f;
+                break;
+            case AdvancedPlayerClass.Mage:
+                MoveSpeed = 4.85f;
+                Damage = 25f;
+                FireDelay = 0.72f;
+                BulletSpeed = 8.4f;
+                MaxHealth = 82f;
+                break;
+            default:
+                MoveSpeed = 5.35f;
+                Damage = 19f;
+                FireDelay = 0.42f;
+                BulletSpeed = 15.5f;
+                MaxHealth = 92f;
+                PierceCount = 1;
+                break;
+        }
+    }
+
+    private Vector3 WeaponScale()
+    {
+        switch (playerClass)
+        {
+            case AdvancedPlayerClass.Knight:
+                return new Vector3(1.05f, 1.05f, 1f);
+            case AdvancedPlayerClass.Mage:
+                return new Vector3(0.75f, 0.75f, 1f);
+            default:
+                return new Vector3(0.8f, 0.8f, 1f);
+        }
     }
 
     private void Update()
@@ -1193,6 +1317,7 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
         HandleShooting();
         Regenerate();
         UpdateTimers();
+        UpdateAnimation();
     }
 
     private void HandleMovement()
@@ -1231,29 +1356,78 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
             aimDirection = direction.normalized;
         }
 
-        barrel.right = aimDirection;
-        barrel.localPosition = (Vector3)(aimDirection * 0.52f) + new Vector3(0f, 0f, -0.01f);
         transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(aimDirection.y, aimDirection.x) * Mathf.Rad2Deg - 90f);
+        barrel.localPosition = new Vector3(0f, 0.54f, -0.01f);
+        barrel.localRotation = Quaternion.identity;
+        barrel.localScale = WeaponScale() * (attackAnimTimer > 0f ? 1.12f : 1f);
     }
 
     private void HandleShooting()
     {
         shotCooldown -= Time.deltaTime;
+        if (playerClass == AdvancedPlayerClass.Archer)
+        {
+            HandleArcherAttack();
+            return;
+        }
+
         if (Input.GetMouseButton(0) == false || shotCooldown > 0f)
         {
             return;
         }
 
         shotCooldown = FireDelay;
+        attackAnimTimer = playerClass == AdvancedPlayerClass.Knight ? 0.28f : 0.22f;
+
+        if (playerClass == AdvancedPlayerClass.Knight)
+        {
+            Vector2 origin = transform.position;
+            world.PerformPlayerMelee(origin, aimDirection, 1.85f + bulletScale * 0.12f, 112f, Damage);
+            return;
+        }
+
+        Vector2 magicOrigin = (Vector2)transform.position + aimDirection * 0.72f;
+        world.SpawnPlayerBullet(magicOrigin, aimDirection, Damage, BulletSpeed, 0, bulletScale * 1.15f, AdvancedProjectileKind.Magic, 5.7f, 1.25f);
+    }
+
+    private void HandleArcherAttack()
+    {
+        if (Input.GetMouseButton(0) == false)
+        {
+            isDrawing = false;
+            drawTimer = 0f;
+            return;
+        }
+
+        if (shotCooldown > 0f)
+        {
+            return;
+        }
+
+        if (isDrawing == false)
+        {
+            isDrawing = true;
+            drawTimer = 0.22f;
+            attackAnimTimer = 0.32f;
+        }
+
+        drawTimer -= Time.deltaTime;
+        if (drawTimer > 0f)
+        {
+            return;
+        }
+
+        isDrawing = false;
+        shotCooldown = FireDelay;
         int shots = Mathf.Max(1, MultiShot);
-        float totalSpread = shots == 1 ? 0f : Mathf.Min(42f, 9.5f * (shots - 1));
+        float totalSpread = shots == 1 ? 0f : Mathf.Min(34f, 8.5f * (shots - 1));
 
         for (int i = 0; i < shots; i++)
         {
             float angle = shots == 1 ? 0f : -totalSpread * 0.5f + totalSpread * i / (shots - 1);
             Vector2 direction = AdvancedGameMath.Rotate(aimDirection, angle);
             Vector2 origin = (Vector2)transform.position + direction * (0.72f + bulletScale * 0.08f);
-            world.SpawnPlayerBullet(origin, direction, Damage, BulletSpeed, PierceCount, bulletScale);
+            world.SpawnPlayerBullet(origin, direction, Damage, BulletSpeed, PierceCount, bulletScale, AdvancedProjectileKind.Arrow, 0f, 0f);
         }
     }
 
@@ -1282,6 +1456,35 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
 
         if (dashTimer > 0f) dashTimer -= Time.deltaTime;
         if (dashCooldownTimer > 0f) dashCooldownTimer -= Time.deltaTime;
+        if (attackAnimTimer > 0f) attackAnimTimer -= Time.deltaTime;
+    }
+
+    private void UpdateAnimation()
+    {
+        if (spriteRenderer == null)
+        {
+            return;
+        }
+
+        AdvancedHeroAnimation animation = AdvancedHeroAnimation.Idle;
+        if (attackAnimTimer > 0f || isDrawing)
+        {
+            animation = playerClass == AdvancedPlayerClass.Archer ? AdvancedHeroAnimation.Draw : AdvancedHeroAnimation.Attack;
+        }
+        else
+        {
+            bool moving = Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.A) || Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.D) || dashTimer > 0f;
+            animation = moving ? AdvancedHeroAnimation.Walk : AdvancedHeroAnimation.Idle;
+        }
+
+        int frame = Mathf.FloorToInt(Time.time * (animation == AdvancedHeroAnimation.Walk ? 8f : 10f)) % 4;
+        spriteRenderer.sprite = AdvancedGameArt.HeroSprite(playerClass, animation, frame);
+
+        if (weaponRenderer != null)
+        {
+            int weaponFrame = animation == AdvancedHeroAnimation.Idle ? 0 : frame;
+            weaponRenderer.sprite = AdvancedGameArt.WeaponSprite(playerClass, weaponFrame);
+        }
     }
 
     public void TakeDamage(float amount)
@@ -1624,15 +1827,22 @@ internal sealed class AdvancedBullet : MonoBehaviour
 {
     private bool fromPlayer;
     private float damage;
+    private float maxDistance;
+    private float travelledDistance;
+    private float explosionRadius;
     private int pierceRemaining;
     private float lifetime = 3.4f;
     private Rigidbody2D body;
+    private AdvancedProjectileKind projectileKind;
 
-    public void Initialize(bool playerBullet, Vector2 direction, float bulletDamage, float speed, int pierce)
+    public void Initialize(bool playerBullet, Vector2 direction, float bulletDamage, float speed, int pierce, AdvancedProjectileKind kind, float projectileMaxDistance, float projectileExplosionRadius)
     {
         fromPlayer = playerBullet;
         damage = bulletDamage;
         pierceRemaining = pierce;
+        projectileKind = kind;
+        maxDistance = projectileMaxDistance;
+        explosionRadius = projectileExplosionRadius;
         body = GetComponent<Rigidbody2D>();
         body.linearVelocity = direction.normalized * speed;
         transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg);
@@ -1641,9 +1851,20 @@ internal sealed class AdvancedBullet : MonoBehaviour
     private void Update()
     {
         lifetime -= Time.deltaTime;
+        if (body != null)
+        {
+            travelledDistance += body.linearVelocity.magnitude * Time.deltaTime;
+        }
+
+        if (fromPlayer && maxDistance > 0f && travelledDistance >= maxDistance)
+        {
+            ExplodeOrDestroy();
+            return;
+        }
+
         if (lifetime <= 0f)
         {
-            Destroy(gameObject);
+            ExplodeOrDestroy();
         }
     }
 
@@ -1651,7 +1872,7 @@ internal sealed class AdvancedBullet : MonoBehaviour
     {
         if (other.GetComponent<AdvancedSolidObstacle>() != null)
         {
-            Destroy(gameObject);
+            ExplodeOrDestroy();
             return;
         }
 
@@ -1659,6 +1880,13 @@ internal sealed class AdvancedBullet : MonoBehaviour
         {
             AdvancedEnemyController enemy = other.GetComponent<AdvancedEnemyController>();
             if (enemy == null) return;
+
+            if (projectileKind == AdvancedProjectileKind.Magic)
+            {
+                ExplodeOrDestroy();
+                return;
+            }
+
             enemy.TakeDamage(damage);
             if (pierceRemaining <= 0) Destroy(gameObject);
             else pierceRemaining--;
@@ -1668,6 +1896,16 @@ internal sealed class AdvancedBullet : MonoBehaviour
         AdvancedPlayerController playerHit = other.GetComponent<AdvancedPlayerController>();
         if (playerHit == null) return;
         playerHit.TakeDamage(damage);
+        Destroy(gameObject);
+    }
+
+    private void ExplodeOrDestroy()
+    {
+        if (fromPlayer && projectileKind == AdvancedProjectileKind.Magic && explosionRadius > 0f && AdvancedGameWorld.Instance != null)
+        {
+            AdvancedGameWorld.Instance.DamageEnemiesInRadius(transform.position, explosionRadius, damage);
+        }
+
         Destroy(gameObject);
     }
 }
@@ -1806,6 +2044,28 @@ internal enum AdvancedGameState
     GameOver
 }
 
+internal enum AdvancedPlayerClass
+{
+    Archer,
+    Knight,
+    Mage
+}
+
+internal enum AdvancedHeroAnimation
+{
+    Idle,
+    Walk,
+    Attack,
+    Draw
+}
+
+internal enum AdvancedProjectileKind
+{
+    Bullet,
+    Arrow,
+    Magic
+}
+
 internal enum AdvancedEnemyKind
 {
     Melee,
@@ -1847,6 +2107,143 @@ internal static class AdvancedGameArt
         sprite = Sprite.Create(texture, new Rect(0f, 0f, 8f, 8f), new Vector2(0.5f, 0.5f), 8f);
         SpriteCache[key] = sprite;
         return sprite;
+    }
+
+    public static Sprite HeroSprite(AdvancedPlayerClass heroClass, AdvancedHeroAnimation animation, int frame)
+    {
+        string key = "hero-" + heroClass + "-" + animation + "-" + frame;
+        Sprite sprite;
+        if (SpriteCache.TryGetValue(key, out sprite)) return sprite;
+
+        Color body;
+        Color accent;
+        Color skin = new Color(0.86f, 0.66f, 0.48f, 1f);
+        Color outline = new Color(0.08f, 0.08f, 0.1f, 1f);
+
+        switch (heroClass)
+        {
+            case AdvancedPlayerClass.Knight:
+                body = new Color(0.58f, 0.64f, 0.72f, 1f);
+                accent = new Color(0.28f, 0.35f, 0.44f, 1f);
+                break;
+            case AdvancedPlayerClass.Mage:
+                body = new Color(0.42f, 0.18f, 0.76f, 1f);
+                accent = new Color(0.9f, 0.72f, 1f, 1f);
+                break;
+            default:
+                body = new Color(0.28f, 0.58f, 0.28f, 1f);
+                accent = new Color(0.84f, 0.68f, 0.34f, 1f);
+                break;
+        }
+
+        float walkShift = animation == AdvancedHeroAnimation.Walk ? Mathf.Sin(frame * Mathf.PI * 0.5f) * 0.08f : 0f;
+        float attackLean = animation == AdvancedHeroAnimation.Attack || animation == AdvancedHeroAnimation.Draw ? 0.08f : 0f;
+        Texture2D texture = TransparentTexture(64);
+
+        for (int y = 0; y < 64; y++)
+        {
+            for (int x = 0; x < 64; x++)
+            {
+                float nx = (x + 0.5f) / 64f * 2f - 1f;
+                float ny = (y + 0.5f) / 64f * 2f - 1f;
+                Color pixel = new Color(0f, 0f, 0f, 0f);
+
+                bool cloak = heroClass == AdvancedPlayerClass.Mage && ny < 0.2f && ny > -0.8f && Mathf.Abs(nx) < 0.42f + (0.2f - ny) * 0.28f;
+                bool bodyMask = ny > -0.62f && ny < 0.42f && Mathf.Abs(nx - attackLean) < 0.36f;
+                bool headMask = (nx * nx / 0.16f + (ny - 0.48f) * (ny - 0.48f) / 0.13f) < 1f;
+                bool hoodOrHelm = heroClass != AdvancedPlayerClass.Archer && (nx * nx / 0.24f + (ny - 0.5f) * (ny - 0.5f) / 0.18f) < 1f;
+                bool leftLeg = ny < -0.45f && ny > -0.9f && Mathf.Abs(nx + 0.14f + walkShift) < 0.11f;
+                bool rightLeg = ny < -0.45f && ny > -0.9f && Mathf.Abs(nx - 0.14f - walkShift) < 0.11f;
+                bool leftArm = ny > -0.28f && ny < 0.18f && Mathf.Abs(nx + 0.42f - attackLean) < 0.12f;
+                bool rightArm = ny > -0.28f && ny < 0.18f && Mathf.Abs(nx - 0.42f - attackLean) < 0.12f;
+
+                bool outlineMask = ny > -0.88f && ny < 0.72f && Mathf.Abs(nx) < 0.56f && (Mathf.Abs(nx) > 0.48f || ny < -0.78f || ny > 0.62f);
+                if (outlineMask) pixel = outline;
+                if (cloak || bodyMask || leftLeg || rightLeg || leftArm || rightArm) pixel = body;
+                if (leftLeg || rightLeg) pixel = new Color(body.r * 0.7f, body.g * 0.7f, body.b * 0.7f, 1f);
+                if (headMask) pixel = heroClass == AdvancedPlayerClass.Knight ? new Color(0.72f, 0.76f, 0.82f, 1f) : skin;
+                if (hoodOrHelm && ny > 0.42f) pixel = heroClass == AdvancedPlayerClass.Knight ? accent : body;
+
+                bool chest = ny > -0.25f && ny < 0.18f && Mathf.Abs(nx) < 0.18f;
+                if (chest) pixel = accent;
+
+                bool eye = ny > 0.45f && ny < 0.53f && Mathf.Abs(nx) < 0.16f;
+                if (eye) pixel = new Color(0.05f, 0.06f, 0.08f, 1f);
+
+                texture.SetPixel(x, y, pixel);
+            }
+        }
+
+        texture.Apply();
+        sprite = Sprite.Create(texture, new Rect(0f, 0f, 64f, 64f), new Vector2(0.5f, 0.5f), 64f);
+        SpriteCache[key] = sprite;
+        return sprite;
+    }
+
+    public static Sprite WeaponSprite(AdvancedPlayerClass heroClass, int frame)
+    {
+        string key = "weapon-" + heroClass + "-" + frame;
+        Sprite sprite;
+        if (SpriteCache.TryGetValue(key, out sprite)) return sprite;
+
+        Texture2D texture = TransparentTexture(64);
+        for (int y = 0; y < 64; y++)
+        {
+            for (int x = 0; x < 64; x++)
+            {
+                float nx = (x + 0.5f) / 64f * 2f - 1f;
+                float ny = (y + 0.5f) / 64f * 2f - 1f;
+                Color pixel = new Color(0f, 0f, 0f, 0f);
+
+                if (heroClass == AdvancedPlayerClass.Knight)
+                {
+                    float swing = (frame % 4 - 1.5f) * 0.08f;
+                    bool blade = Mathf.Abs(nx - swing) < 0.055f && ny > -0.25f && ny < 0.88f;
+                    bool guard = Mathf.Abs(ny + 0.24f) < 0.045f && Mathf.Abs(nx) < 0.34f;
+                    bool handle = Mathf.Abs(nx) < 0.06f && ny > -0.72f && ny < -0.22f;
+                    if (blade) pixel = new Color(0.9f, 0.95f, 1f, 1f);
+                    if (guard) pixel = new Color(0.78f, 0.64f, 0.22f, 1f);
+                    if (handle) pixel = new Color(0.34f, 0.22f, 0.12f, 1f);
+                }
+                else if (heroClass == AdvancedPlayerClass.Mage)
+                {
+                    bool staff = Mathf.Abs(nx) < 0.045f && ny > -0.78f && ny < 0.64f;
+                    bool orb = nx * nx / 0.12f + (ny - 0.72f) * (ny - 0.72f) / 0.12f < 1f;
+                    if (staff) pixel = new Color(0.55f, 0.34f, 0.15f, 1f);
+                    if (orb) pixel = frame % 2 == 0 ? new Color(0.75f, 0.35f, 1f, 1f) : new Color(0.95f, 0.75f, 1f, 1f);
+                }
+                else
+                {
+                    float draw = frame % 4 * 0.025f;
+                    bool bow = Mathf.Abs(Mathf.Sqrt((nx + 0.1f) * (nx + 0.1f) / 0.28f + ny * ny / 0.95f) - 1f) < 0.05f && nx < 0.25f;
+                    bool stringLine = Mathf.Abs(nx - 0.28f + draw) < 0.025f && Mathf.Abs(ny) < 0.76f;
+                    bool arrow = Mathf.Abs(ny) < 0.025f && nx > -0.48f && nx < 0.62f;
+                    if (bow) pixel = new Color(0.55f, 0.34f, 0.14f, 1f);
+                    if (stringLine) pixel = new Color(0.9f, 0.86f, 0.75f, 1f);
+                    if (arrow) pixel = new Color(0.86f, 0.76f, 0.44f, 1f);
+                }
+
+                texture.SetPixel(x, y, pixel);
+            }
+        }
+
+        texture.Apply();
+        sprite = Sprite.Create(texture, new Rect(0f, 0f, 64f, 64f), new Vector2(0.5f, 0.5f), 64f);
+        SpriteCache[key] = sprite;
+        return sprite;
+    }
+
+    public static Sprite PlayerProjectileSprite(AdvancedProjectileKind kind)
+    {
+        switch (kind)
+        {
+            case AdvancedProjectileKind.Arrow:
+                return TwoToneSprite("projectile-arrow", new Color(0.9f, 0.78f, 0.43f), new Color(0.28f, 0.18f, 0.08f), (x, y) => Mathf.Abs(y) < 0.08f && x > -0.8f && x < 0.72f, (x, y) => x > 0.48f && Mathf.Abs(y) < 0.18f);
+            case AdvancedProjectileKind.Magic:
+                return StarSprite("projectile-magic", new Color(0.82f, 0.4f, 1f), 9);
+            default:
+                return DiamondSprite("player-bullet", Color.white, new Color(0.5f, 0.95f, 1f));
+        }
     }
 
     public static Sprite PlayerSprite()
