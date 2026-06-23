@@ -211,7 +211,7 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         floor.transform.SetParent(sceneryRoot);
         floor.transform.localScale = new Vector3(220f, 220f, 1f);
         SpriteRenderer floorRenderer = floor.AddComponent<SpriteRenderer>();
-        floorRenderer.sprite = AdvancedGameArt.SquareSprite(new Color(0.065f, 0.075f, 0.095f));
+        floorRenderer.sprite = AdvancedGameArt.SquareSprite(new Color(0.18f, 0.28f, 0.16f));
         floorRenderer.sortingOrder = -50;
 
         for (int x = -44; x <= 44; x += 4)
@@ -224,16 +224,9 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
                 tile.transform.position = new Vector3(x, y, 0.02f);
                 tile.transform.localScale = new Vector3(3.86f, 3.86f, 1f);
                 SpriteRenderer renderer = tile.AddComponent<SpriteRenderer>();
-                renderer.sprite = AdvancedGameArt.SquareSprite(tone > 0.58f ? new Color(0.1f, 0.118f, 0.145f) : new Color(0.082f, 0.096f, 0.12f));
+                renderer.sprite = AdvancedGameArt.FloorSprite(Mathf.RoundToInt(tone * 12f) + x + y);
                 renderer.sortingOrder = -45;
             }
-        }
-
-        Sprite grid = AdvancedGameArt.SquareSprite(new Color(0.24f, 0.3f, 0.36f, 0.34f));
-        for (int i = -48; i <= 48; i += 4)
-        {
-            CreateLine("Grid V " + i, grid, new Vector3(i, 0f, 0f), new Vector3(0.025f, 100f, 1f));
-            CreateLine("Grid H " + i, grid, new Vector3(0f, i, 0f), new Vector3(100f, 0.025f, 1f));
         }
 
         CreateCityLayout();
@@ -269,11 +262,17 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         CreateWall("Broken Wall B", new Vector2(9f, -3f), new Vector2(0.8f, 8f));
         CreateWall("Broken Wall C", new Vector2(-10f, -2f), new Vector2(0.8f, 6f));
         CreateWall("Broken Wall D", new Vector2(4f, 8f), new Vector2(4f, 0.8f));
+
+        CreateTree("Oak Cluster", new Vector2(-24f, 20f), 1.35f, 0);
+        CreateTree("Pine Cluster", new Vector2(23f, 20f), 1.3f, 1);
+        CreateTree("Red Tree", new Vector2(-24f, -21f), 1.25f, 2);
+        CreateTree("Dead Tree", new Vector2(25f, -22f), 1.2f, 3);
+        CreateTree("Center Grove A", new Vector2(-1.8f, -14f), 1.1f, 4);
+        CreateTree("Center Grove B", new Vector2(8f, 20f), 1.05f, 5);
     }
 
     private void CreateFloorDetails()
     {
-        Sprite decalSprite = AdvancedGameArt.SquareSprite(new Color(0.18f, 0.2f, 0.23f, 0.45f));
         for (int i = 0; i < 55; i++)
         {
             Vector2 position = new Vector2(PseudoRandom(i, 61) * 54f - 27f, PseudoRandom(i, 67) * 54f - 27f);
@@ -285,10 +284,11 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
             GameObject decal = new GameObject("Floor Scuff");
             decal.transform.SetParent(sceneryRoot);
             decal.transform.position = new Vector3(position.x, position.y, -0.04f);
-            decal.transform.localScale = new Vector3(Mathf.Lerp(0.5f, 1.4f, PseudoRandom(i, 71)), 0.08f, 1f);
+            float scale = Mathf.Lerp(0.35f, 0.9f, PseudoRandom(i, 71));
+            decal.transform.localScale = new Vector3(scale, scale, 1f);
             decal.transform.rotation = Quaternion.Euler(0f, 0f, PseudoRandom(i, 73) * 360f);
             SpriteRenderer renderer = decal.AddComponent<SpriteRenderer>();
-            renderer.sprite = decalSprite;
+            renderer.sprite = AdvancedGameArt.DecorSprite(i);
             renderer.sortingOrder = -18;
         }
     }
@@ -303,6 +303,12 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     {
         GameObject wall = CreateSolidObject(name, center, size, AdvancedGameArt.WallSprite(), -8);
         wall.transform.localScale = new Vector3(size.x, size.y, 1f);
+    }
+
+    private void CreateTree(string name, Vector2 center, float size, int variant)
+    {
+        GameObject tree = CreateSolidObject(name, center, new Vector2(size * 0.82f, size * 0.82f), AdvancedGameArt.TreeSprite(variant), -7);
+        tree.transform.localScale = new Vector3(size, size, 1f);
     }
 
     private GameObject CreateSolidObject(string name, Vector2 center, Vector2 size, Sprite sprite, int sortingOrder)
@@ -1356,10 +1362,15 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
             aimDirection = direction.normalized;
         }
 
-        transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(aimDirection.y, aimDirection.x) * Mathf.Rad2Deg - 90f);
-        barrel.localPosition = new Vector3(0f, 0.54f, -0.01f);
-        barrel.localRotation = Quaternion.identity;
+        transform.rotation = Quaternion.identity;
+        barrel.localPosition = new Vector3(aimDirection.x * 0.54f, aimDirection.y * 0.54f, -0.01f);
+        barrel.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(aimDirection.y, aimDirection.x) * Mathf.Rad2Deg + WeaponRotationOffset());
         barrel.localScale = WeaponScale() * (attackAnimTimer > 0f ? 1.12f : 1f);
+    }
+
+    private float WeaponRotationOffset()
+    {
+        return playerClass == AdvancedPlayerClass.Archer ? 0f : -90f;
     }
 
     private void HandleShooting()
@@ -1580,9 +1591,20 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
     private void BuildVisuals()
     {
         VisualColor = EnemyColor();
+
+        GameObject silhouette = new GameObject("Enemy Silhouette");
+        silhouette.transform.SetParent(transform);
+        silhouette.transform.localPosition = new Vector3(0f, -0.02f, 0.01f);
+        silhouette.transform.localScale = kind == AdvancedEnemyKind.Boss ? Vector3.one * 0.9f : Vector3.one * 0.82f;
+        SpriteRenderer silhouetteRenderer = silhouette.AddComponent<SpriteRenderer>();
+        silhouetteRenderer.sprite = AdvancedGameArt.EnemyFallbackSprite(kind);
+        silhouetteRenderer.color = new Color(1f, 1f, 1f, 0.92f);
+        silhouetteRenderer.sortingOrder = kind == AdvancedEnemyKind.Boss ? 9 : 8;
+
         bodyRenderer = gameObject.AddComponent<SpriteRenderer>();
         bodyRenderer.sprite = AdvancedGameArt.EnemySprite(kind);
-        bodyRenderer.sortingOrder = kind == AdvancedEnemyKind.Boss ? 9 : 6;
+        bodyRenderer.color = Color.white;
+        bodyRenderer.sortingOrder = kind == AdvancedEnemyKind.Boss ? 10 : 9;
 
         CircleCollider2D collider = gameObject.AddComponent<CircleCollider2D>();
         collider.radius = kind == AdvancedEnemyKind.Boss ? 0.54f : 0.48f;
@@ -1637,6 +1659,11 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
         if (kind == AdvancedEnemyKind.Ranged) UpdateRanged();
         else if (kind == AdvancedEnemyKind.Boss) UpdateBoss();
         else UpdateMelee();
+
+        if (bodyRenderer != null)
+        {
+            bodyRenderer.sprite = AdvancedGameArt.EnemySprite(kind, Mathf.FloorToInt(Time.time * 8f));
+        }
     }
 
     private void UpdateMelee()
@@ -1705,6 +1732,10 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
             Vector2 currentPosition = transform.position;
             Vector2 nextPosition = world.ResolveMovement(currentPosition, direction.normalized * speed * Time.deltaTime, kind == AdvancedEnemyKind.Boss ? 1.25f : 0.5f);
             transform.position = nextPosition;
+            if (bodyRenderer != null && Mathf.Abs(direction.x) > 0.05f)
+            {
+                bodyRenderer.flipX = direction.x < 0f;
+            }
         }
     }
 
@@ -2089,8 +2120,171 @@ internal static class AdvancedGameMath
 
 internal static class AdvancedGameArt
 {
+    private const string PixelCrawlerRoot = "Assets/Pixel Crawler - Free Pack/";
     private static readonly Dictionary<string, Sprite> SpriteCache = new Dictionary<string, Sprite>();
     private static readonly Dictionary<string, Texture2D> PixelCache = new Dictionary<string, Texture2D>();
+    private static readonly Dictionary<string, Texture2D> AssetTextureCache = new Dictionary<string, Texture2D>();
+
+    private static Sprite PixelCrawlerFrame(string key, string relativePath, int frameWidth, int frameHeight, int frame, float pixelsPerUnit)
+    {
+        Texture2D texture = LoadPixelCrawlerTexture(relativePath);
+        if (texture == null)
+        {
+            return null;
+        }
+
+        int frameCount = Mathf.Max(1, texture.width / frameWidth);
+        int safeFrame = Mathf.Abs(frame) % frameCount;
+        string cacheKey = "pc-frame-" + key + "-" + safeFrame;
+        Sprite sprite;
+        if (SpriteCache.TryGetValue(cacheKey, out sprite)) return sprite;
+
+        Rect rect = new Rect(safeFrame * frameWidth, texture.height - frameHeight, frameWidth, frameHeight);
+        sprite = Sprite.Create(texture, rect, new Vector2(0.5f, 0.42f), pixelsPerUnit);
+        SpriteCache[cacheKey] = sprite;
+        return sprite;
+    }
+
+    private static Sprite PixelCrawlerRegion(string key, string relativePath, int x, int yFromTop, int width, int height, float pixelsPerUnit, Vector2 pivot)
+    {
+        string cacheKey = "pc-region-" + key + "-" + x + "-" + yFromTop + "-" + width + "-" + height;
+        Sprite sprite;
+        if (SpriteCache.TryGetValue(cacheKey, out sprite)) return sprite;
+
+        Texture2D texture = LoadPixelCrawlerTexture(relativePath);
+        if (texture == null)
+        {
+            return null;
+        }
+
+        Rect rect = new Rect(x, texture.height - yFromTop - height, width, height);
+        sprite = Sprite.Create(texture, rect, pivot, pixelsPerUnit);
+        SpriteCache[cacheKey] = sprite;
+        return sprite;
+    }
+
+    private static Texture2D LoadPixelCrawlerTexture(string relativePath)
+    {
+        Texture2D cachedTexture;
+        if (AssetTextureCache.TryGetValue(relativePath, out cachedTexture))
+        {
+            return cachedTexture;
+        }
+
+        Texture2D fileTexture = LoadTextureFromProjectFile(relativePath);
+        if (fileTexture != null)
+        {
+            AssetTextureCache[relativePath] = fileTexture;
+            return fileTexture;
+        }
+
+#if UNITY_EDITOR
+        string path = PixelCrawlerRoot + relativePath;
+        Type assetDatabaseType = Type.GetType("UnityEditor.AssetDatabase, UnityEditor");
+        if (assetDatabaseType == null)
+        {
+            foreach (System.Reflection.Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                assetDatabaseType = assembly.GetType("UnityEditor.AssetDatabase");
+                if (assetDatabaseType != null)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (assetDatabaseType == null)
+        {
+            return null;
+        }
+
+        System.Reflection.MethodInfo loadMethod = assetDatabaseType.GetMethod("LoadAssetAtPath", new Type[] { typeof(string), typeof(Type) });
+        if (loadMethod == null)
+        {
+            return null;
+        }
+
+        Texture2D texture = loadMethod.Invoke(null, new object[] { path, typeof(Texture2D) }) as Texture2D;
+        if (texture != null)
+        {
+            texture.filterMode = FilterMode.Point;
+            texture.wrapMode = TextureWrapMode.Clamp;
+            AssetTextureCache[relativePath] = texture;
+        }
+
+        return texture;
+#else
+        return null;
+#endif
+    }
+
+    private static Texture2D LoadTextureFromProjectFile(string relativePath)
+    {
+        try
+        {
+            string projectRoot = System.IO.Directory.GetParent(Application.dataPath).FullName;
+            string assetPath = PixelCrawlerRoot.Replace("/", System.IO.Path.DirectorySeparatorChar.ToString());
+            string texturePath = System.IO.Path.Combine(projectRoot, assetPath, relativePath.Replace("/", System.IO.Path.DirectorySeparatorChar.ToString()));
+            if (System.IO.File.Exists(texturePath) == false)
+            {
+                return null;
+            }
+
+            byte[] bytes = System.IO.File.ReadAllBytes(texturePath);
+            Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            if (ImageConversion.LoadImage(texture, bytes, false) == false)
+            {
+                return null;
+            }
+
+            texture.filterMode = FilterMode.Point;
+            texture.wrapMode = TextureWrapMode.Clamp;
+            return texture;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Sprite PixelHeroSprite(AdvancedPlayerClass heroClass, AdvancedHeroAnimation animation, int frame)
+    {
+        string character;
+        switch (heroClass)
+        {
+            case AdvancedPlayerClass.Knight:
+                character = "Knight";
+                break;
+            case AdvancedPlayerClass.Mage:
+                character = "Wizzard";
+                break;
+            default:
+                character = "Rogue";
+                break;
+        }
+
+        string motion = animation == AdvancedHeroAnimation.Walk ? "Run" : "Idle";
+        return PixelCrawlerFrame("hero-" + character + "-" + motion, "Entities/Npc's/" + character + "/" + motion + "/" + motion + "-Sheet.png", 32, 32, frame, 32f);
+    }
+
+    private static Sprite PixelEnemySprite(AdvancedEnemyKind kind, int frame)
+    {
+        switch (kind)
+        {
+            case AdvancedEnemyKind.Ranged:
+                return PixelCrawlerFrame("enemy-skeleton-mage-run", "Entities/Mobs/Skeleton Crew/Skeleton - Mage/Run/Run-Sheet.png", 32, 32, frame, 32f);
+            case AdvancedEnemyKind.Tank:
+                return PixelCrawlerFrame("enemy-orc-warrior-run", "Entities/Mobs/Orc Crew/Orc - Warrior/Run/Run-Sheet.png", 32, 32, frame, 32f);
+            case AdvancedEnemyKind.GlassCannon:
+                return PixelCrawlerFrame("enemy-skeleton-rogue-run", "Entities/Mobs/Skeleton Crew/Skeleton - Rogue/Run/Run-Sheet.png", 32, 32, frame, 32f);
+            case AdvancedEnemyKind.Exploder:
+                return PixelCrawlerFrame("enemy-orc-rogue-run", "Entities/Mobs/Orc Crew/Orc - Rogue/Run/Run-Sheet.png", 32, 32, frame, 32f);
+            case AdvancedEnemyKind.Boss:
+                return PixelCrawlerFrame("enemy-orc-boss-run", "Entities/Mobs/Orc Crew/Orc/Run/Run-Sheet.png", 32, 32, frame, 32f);
+            default:
+                return PixelCrawlerFrame("enemy-skeleton-warrior-run", "Entities/Mobs/Skeleton Crew/Skeleton - Warrior/Run/Run-Sheet.png", 32, 32, frame, 32f);
+        }
+    }
 
     public static Sprite SquareSprite(Color color)
     {
@@ -2111,6 +2305,9 @@ internal static class AdvancedGameArt
 
     public static Sprite HeroSprite(AdvancedPlayerClass heroClass, AdvancedHeroAnimation animation, int frame)
     {
+        Sprite assetSprite = PixelHeroSprite(heroClass, animation, frame);
+        if (assetSprite != null) return assetSprite;
+
         string key = "hero-" + heroClass + "-" + animation + "-" + frame;
         Sprite sprite;
         if (SpriteCache.TryGetValue(key, out sprite)) return sprite;
@@ -2278,6 +2475,19 @@ internal static class AdvancedGameArt
 
     public static Sprite EnemySprite(AdvancedEnemyKind kind)
     {
+        return EnemySprite(kind, 0);
+    }
+
+    public static Sprite EnemySprite(AdvancedEnemyKind kind, int frame)
+    {
+        Sprite assetSprite = PixelEnemySprite(kind, frame);
+        if (assetSprite != null) return assetSprite;
+
+        return EnemyFallbackSprite(kind);
+    }
+
+    public static Sprite EnemyFallbackSprite(AdvancedEnemyKind kind)
+    {
         switch (kind)
         {
             case AdvancedEnemyKind.Ranged: return DiamondSprite("enemy-ranged", new Color(0.77f, 0.35f, 1f), new Color(0.95f, 0.78f, 1f));
@@ -2287,6 +2497,73 @@ internal static class AdvancedGameArt
             case AdvancedEnemyKind.Boss: return BossSprite();
             default: return StarSprite("enemy-melee", new Color(1f, 0.24f, 0.24f), 8);
         }
+    }
+
+    public static Sprite FloorSprite(int variant)
+    {
+        int safe = Mathf.Abs(variant);
+        string key = "floor-grass-clean-" + safe % 8;
+        Sprite sprite;
+        if (SpriteCache.TryGetValue(key, out sprite)) return sprite;
+
+        Color baseColor = Color.Lerp(new Color(0.17f, 0.31f, 0.16f), new Color(0.22f, 0.38f, 0.18f), (safe % 8) / 7f);
+        Texture2D texture = new Texture2D(16, 16);
+        texture.filterMode = FilterMode.Point;
+
+        for (int y = 0; y < 16; y++)
+        {
+            for (int x = 0; x < 16; x++)
+            {
+                float noise = Mathf.Repeat(Mathf.Sin((x + safe * 11) * 7.13f + (y + safe * 3) * 13.71f) * 127.1f, 1f);
+                float shade = noise > 0.84f ? 0.08f : noise < 0.08f ? -0.05f : 0f;
+                texture.SetPixel(x, y, new Color(baseColor.r + shade, baseColor.g + shade, baseColor.b + shade, 1f));
+            }
+        }
+
+        texture.Apply();
+        sprite = Sprite.Create(texture, new Rect(0f, 0f, 16f, 16f), new Vector2(0.5f, 0.5f), 16f);
+        SpriteCache[key] = sprite;
+        return sprite;
+    }
+
+    public static Sprite DecorSprite(int variant)
+    {
+        int choice = Mathf.Abs(variant) % 6;
+        Sprite assetSprite = null;
+        switch (choice)
+        {
+            case 0:
+                assetSprite = PixelCrawlerRegion("decor-bush-a", "Environment/Props/Static/Vegetation.png", 0, 0, 32, 32, 32f, new Vector2(0.5f, 0.5f));
+                break;
+            case 1:
+                assetSprite = PixelCrawlerRegion("decor-bush-b", "Environment/Props/Static/Vegetation.png", 64, 0, 32, 32, 32f, new Vector2(0.5f, 0.5f));
+                break;
+            case 2:
+                assetSprite = PixelCrawlerRegion("decor-grass-a", "Environment/Props/Static/Vegetation.png", 0, 128, 32, 32, 32f, new Vector2(0.5f, 0.5f));
+                break;
+            case 3:
+                assetSprite = PixelCrawlerRegion("decor-flowers-a", "Environment/Props/Static/Vegetation.png", 128, 128, 32, 32, 32f, new Vector2(0.5f, 0.5f));
+                break;
+            case 4:
+                assetSprite = PixelCrawlerRegion("decor-rock-a", "Environment/Props/Static/Rocks.png", 0, 0, 48, 48, 48f, new Vector2(0.5f, 0.5f));
+                break;
+            default:
+                assetSprite = PixelCrawlerRegion("decor-rock-b", "Environment/Props/Static/Rocks.png", 48, 48, 48, 48, 48f, new Vector2(0.5f, 0.5f));
+                break;
+        }
+
+        if (assetSprite != null) return assetSprite;
+        return SquareSprite(new Color(0.14f, 0.34f, 0.13f, 0.75f));
+    }
+
+    public static Sprite TreeSprite(int variant)
+    {
+        int choice = Mathf.Abs(variant) % 4;
+        int x = choice == 0 ? 0 : choice == 1 ? 96 : choice == 2 ? 96 : 192;
+        int y = choice == 2 ? 192 : 0;
+        Sprite assetSprite = PixelCrawlerRegion("tree-model-03-" + choice, "Environment/Props/Static/Trees/Model_03/Size_04.png", x, y, 96, 192, 128f, new Vector2(0.5f, 0.28f));
+        if (assetSprite != null) return assetSprite;
+        return BlockSprite("tree-fallback-" + choice, new Color(0.16f, 0.42f, 0.15f), new Color(0.09f, 0.2f, 0.08f));
     }
 
     public static Sprite XpSprite() { return DiamondSprite("xp", new Color(0.35f, 0.82f, 1f), new Color(0.8f, 1f, 1f)); }

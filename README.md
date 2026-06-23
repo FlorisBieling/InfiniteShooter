@@ -27,7 +27,10 @@ Een 2D top-down survivor shooter die zichzelf opbouwt zodra je op Play drukt.
 
 De game spawnt elke 30 seconden een nieuwe wave. Elke wave bevat meer enemies en enemies worden geleidelijk sterker. Elke 5 waves verschijnt een boss.
 
-## Asset Store art
+## Art assets
 
-Asset Store packs moeten eerst via Unity zelf worden geimporteerd: `Window > Package Manager > My Assets`.
-Daarna kunnen de sprites/tiles uit het pakket aan de gameplay gekoppeld worden.
+De game gebruikt `Pixel Crawler - Free Pack` van Anokolisa voor de eerste pixel-art pass:
+characters, enemies, floor tiles, trees, props en building pieces.
+
+Volgens `Assets/Pixel Crawler - Free Pack/Terms.txt` mag de art gebruikt en aangepast worden in
+studie-, hobby- en commerciele projecten. Credit is niet verplicht, maar wel gewaardeerd.
