@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -22,13 +23,19 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     public static AdvancedGameWorld Instance { get; private set; }
 
     private const float SecondsPerWave = 30f;
+    private const float EnvironmentChunkSize = 28f;
+    private const int EnvironmentChunkRadius = 2;
+    private const bool PermanentUpgradesEnabled = false;
     private const string PointsKey = "InfiniteShooter.MetaPoints";
     private const string UpgradeKeyPrefix = "InfiniteShooter.Upgrade.";
 
     private readonly List<AdvancedEnemyController> enemies = new List<AdvancedEnemyController>();
     private readonly List<AdvancedUpgradeOption> levelChoices = new List<AdvancedUpgradeOption>();
     private readonly List<AdvancedPermanentUpgrade> permanentUpgrades = new List<AdvancedPermanentUpgrade>();
+    private readonly List<string> acquiredUpgrades = new List<string>();
     private readonly List<Rect> solidRects = new List<Rect>();
+    private readonly Dictionary<Vector2Int, Transform> environmentChunks = new Dictionary<Vector2Int, Transform>();
+    private readonly Dictionary<string, int> upgradeStacks = new Dictionary<string, int>();
 
     private Transform sceneryRoot;
     private Transform enemyRoot;
@@ -61,7 +68,13 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     private GUIStyle centeredSmallStyle;
     private GUIStyle titleStyle;
     private GUIStyle buttonStyle;
+    private GUIStyle menuButtonStyle;
+    private GUIStyle optionButtonStyle;
+    private GUIStyle panelHeaderStyle;
     private GUIStyle bigNumberStyle;
+    private Vector2 statsScroll;
+    private Vector2 permanentScroll;
+    private AdvancedGameState statsReturnState;
 
     public AdvancedPlayerController Player
     {
@@ -101,6 +114,11 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     private void BuildPermanentUpgrades()
     {
         permanentUpgrades.Clear();
+        if (PermanentUpgradesEnabled == false)
+        {
+            return;
+        }
+
         permanentUpgrades.Add(new AdvancedPermanentUpgrade("hull", "Fortified Hull", "+10 max HP per level.", 8, 2, 2, p => p.IncreaseMaxHealth(10f)));
         permanentUpgrades.Add(new AdvancedPermanentUpgrade("rounds", "Sharper Rounds", "+8% damage per level.", 10, 2, 2, p => p.Damage *= 1.08f));
         permanentUpgrades.Add(new AdvancedPermanentUpgrade("boots", "Runner Boots", "+5% movement speed per level.", 6, 2, 3, p => p.MoveSpeed *= 1.05f));
@@ -136,7 +154,10 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     {
         enemies.Clear();
         levelChoices.Clear();
+        acquiredUpgrades.Clear();
+        upgradeStacks.Clear();
         solidRects.Clear();
+        environmentChunks.Clear();
         wave = 0;
         level = 1;
         xp = 0;
@@ -187,7 +208,6 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         ResetRunStats();
         ClearWorld();
         CreateRoots();
-        CreateArena();
         CreateCamera();
     }
 
@@ -207,30 +227,130 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
     private void CreateArena()
     {
-        GameObject floor = new GameObject("Floor");
-        floor.transform.SetParent(sceneryRoot);
-        floor.transform.localScale = new Vector3(220f, 220f, 1f);
-        SpriteRenderer floorRenderer = floor.AddComponent<SpriteRenderer>();
-        floorRenderer.sprite = AdvancedGameArt.SquareSprite(new Color(0.18f, 0.28f, 0.16f));
-        floorRenderer.sortingOrder = -50;
+        environmentChunks.Clear();
+        RefreshEnvironmentChunks(Vector2.zero, true);
+    }
 
-        for (int x = -44; x <= 44; x += 4)
+    private void RefreshEnvironmentChunks(Vector2 focus, bool force)
+    {
+        int centerX = Mathf.FloorToInt(focus.x / EnvironmentChunkSize);
+        int centerY = Mathf.FloorToInt(focus.y / EnvironmentChunkSize);
+
+        for (int x = centerX - EnvironmentChunkRadius; x <= centerX + EnvironmentChunkRadius; x++)
         {
-            for (int y = -44; y <= 44; y += 4)
+            for (int y = centerY - EnvironmentChunkRadius; y <= centerY + EnvironmentChunkRadius; y++)
             {
-                float tone = Mathf.Abs(Mathf.Sin(x * 17.17f + y * 3.91f));
+                Vector2Int chunk = new Vector2Int(x, y);
+                if (force || environmentChunks.ContainsKey(chunk) == false)
+                {
+                    CreateEnvironmentChunk(chunk);
+                }
+            }
+        }
+    }
+
+    private void CreateEnvironmentChunk(Vector2Int chunk)
+    {
+        if (environmentChunks.ContainsKey(chunk))
+        {
+            return;
+        }
+
+        GameObject chunkObject = new GameObject("Environment Chunk " + chunk.x + "," + chunk.y);
+        chunkObject.transform.SetParent(sceneryRoot);
+        Transform chunkRoot = chunkObject.transform;
+        environmentChunks[chunk] = chunkRoot;
+
+        Vector2 center = ChunkWorldCenter(chunk);
+        const int tilesPerAxis = 7;
+        const float tileSpacing = 4f;
+        for (int x = 0; x < tilesPerAxis; x++)
+        {
+            for (int y = 0; y < tilesPerAxis; y++)
+            {
+                Vector2 tileCenter = center + new Vector2((x - 3) * tileSpacing, (y - 3) * tileSpacing);
                 GameObject tile = new GameObject("Floor Tile");
-                tile.transform.SetParent(sceneryRoot);
-                tile.transform.position = new Vector3(x, y, 0.02f);
-                tile.transform.localScale = new Vector3(3.86f, 3.86f, 1f);
+                tile.transform.SetParent(chunkRoot);
+                tile.transform.position = new Vector3(tileCenter.x, tileCenter.y, 0.02f);
+                tile.transform.localScale = new Vector3(4.08f, 4.08f, 1f);
                 SpriteRenderer renderer = tile.AddComponent<SpriteRenderer>();
-                renderer.sprite = AdvancedGameArt.FloorSprite(Mathf.RoundToInt(tone * 12f) + x + y);
+                renderer.sprite = AdvancedGameArt.FloorSprite(chunk.x * 113 + chunk.y * 37 + x * 11 + y * 17);
                 renderer.sortingOrder = -45;
             }
         }
 
-        CreateCityLayout();
-        CreateFloorDetails();
+        CreateChunkObstacles(chunk, chunkRoot, center);
+        CreateChunkFloorDetails(chunk, chunkRoot, center);
+    }
+
+    private void CreateChunkObstacles(Vector2Int chunk, Transform chunkRoot, Vector2 center)
+    {
+        bool originChunk = chunk == Vector2Int.zero;
+        int obstacleCount = originChunk ? 5 : 7;
+        for (int i = 0; i < obstacleCount; i++)
+        {
+            float roll = ChunkRandom(chunk, i * 19 + 3);
+            Vector2 position = center + new Vector2(ChunkRandom(chunk, i * 23 + 5) * 22f - 11f, ChunkRandom(chunk, i * 29 + 7) * 22f - 11f);
+            if (originChunk && position.sqrMagnitude < 42f)
+            {
+                continue;
+            }
+
+            if (IsCircleBlocked(position, 1.2f))
+            {
+                continue;
+            }
+
+            if (roll < 0.32f)
+            {
+                Vector2 size = new Vector2(Mathf.Lerp(4.2f, 7.8f, ChunkRandom(chunk, i * 31 + 11)), Mathf.Lerp(3.8f, 6.4f, ChunkRandom(chunk, i * 37 + 13)));
+                CreateBuilding("Chunk House", position, size, Mathf.Abs(chunk.x * 5 + chunk.y * 7 + i), chunkRoot);
+            }
+            else if (roll < 0.68f)
+            {
+                bool horizontal = ChunkRandom(chunk, i * 41 + 17) > 0.45f;
+                Vector2 size = horizontal
+                    ? new Vector2(Mathf.Lerp(4.5f, 9.5f, ChunkRandom(chunk, i * 43 + 19)), 0.85f)
+                    : new Vector2(0.85f, Mathf.Lerp(4.5f, 9.5f, ChunkRandom(chunk, i * 47 + 23)));
+                CreateWall("Chunk Wall", position, size, chunkRoot, Mathf.Abs(chunk.x * 13 + chunk.y * 17 + i));
+            }
+            else
+            {
+                CreateTree("Chunk Tree", position, Mathf.Lerp(0.95f, 1.55f, ChunkRandom(chunk, i * 53 + 29)), Mathf.Abs(chunk.x + chunk.y + i), chunkRoot);
+            }
+        }
+    }
+
+    private void CreateChunkFloorDetails(Vector2Int chunk, Transform chunkRoot, Vector2 center)
+    {
+        for (int i = 0; i < 10; i++)
+        {
+            Vector2 position = center + new Vector2(ChunkRandom(chunk, i * 59 + 31) * 25f - 12.5f, ChunkRandom(chunk, i * 61 + 33) * 25f - 12.5f);
+            if (IsCircleBlocked(position, 0.35f))
+            {
+                continue;
+            }
+
+            GameObject decal = new GameObject("Floor Detail");
+            decal.transform.SetParent(chunkRoot);
+            decal.transform.position = new Vector3(position.x, position.y, -0.04f);
+            float scale = Mathf.Lerp(0.35f, 0.9f, ChunkRandom(chunk, i * 67 + 35));
+            decal.transform.localScale = new Vector3(scale, scale, 1f);
+            decal.transform.rotation = Quaternion.Euler(0f, 0f, ChunkRandom(chunk, i * 71 + 37) * 360f);
+            SpriteRenderer renderer = decal.AddComponent<SpriteRenderer>();
+            renderer.sprite = AdvancedGameArt.DecorSprite(chunk.x * 97 + chunk.y * 89 + i);
+            renderer.sortingOrder = -18;
+        }
+    }
+
+    private Vector2 ChunkWorldCenter(Vector2Int chunk)
+    {
+        return new Vector2(chunk.x * EnvironmentChunkSize, chunk.y * EnvironmentChunkSize);
+    }
+
+    private float ChunkRandom(Vector2Int chunk, int salt)
+    {
+        return Mathf.Repeat(Mathf.Sin(chunk.x * 127.1f + chunk.y * 311.7f + salt * 74.7f) * 43758.5453f, 1f);
     }
 
     private void CreateLine(string name, Sprite sprite, Vector3 position, Vector3 scale)
@@ -295,31 +415,62 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
     private void CreateBuilding(string name, Vector2 center, Vector2 size, int variant)
     {
-        GameObject building = CreateSolidObject(name, center, size, AdvancedGameArt.BuildingSprite(variant), -10);
+        CreateBuilding(name, center, size, variant, sceneryRoot);
+    }
+
+    private void CreateBuilding(string name, Vector2 center, Vector2 size, int variant, Transform parent)
+    {
+        GameObject building = CreateSolidObject(name, center, size, AdvancedGameArt.BuildingSprite(variant), -10, parent);
         building.transform.localScale = new Vector3(size.x, size.y, 1f);
     }
 
     private void CreateWall(string name, Vector2 center, Vector2 size)
     {
-        GameObject wall = CreateSolidObject(name, center, size, AdvancedGameArt.WallSprite(), -8);
+        CreateWall(name, center, size, sceneryRoot, 0);
+    }
+
+    private void CreateWall(string name, Vector2 center, Vector2 size, Transform parent, int variant)
+    {
+        GameObject wall = CreateSolidObject(name, center, size, AdvancedGameArt.WallSprite(variant), -8, parent);
         wall.transform.localScale = new Vector3(size.x, size.y, 1f);
     }
 
     private void CreateTree(string name, Vector2 center, float size, int variant)
     {
-        GameObject tree = CreateSolidObject(name, center, new Vector2(size * 0.82f, size * 0.82f), AdvancedGameArt.TreeSprite(variant), -7);
+        CreateTree(name, center, size, variant, sceneryRoot);
+    }
+
+    private void CreateTree(string name, Vector2 center, float size, int variant, Transform parent)
+    {
+        GameObject tree = CreateSolidObject(name, center, new Vector2(size * 0.82f, size * 0.82f), AdvancedGameArt.TreeSprite(variant), -7, parent, false);
         tree.transform.localScale = new Vector3(size, size, 1f);
     }
 
     private GameObject CreateSolidObject(string name, Vector2 center, Vector2 size, Sprite sprite, int sortingOrder)
     {
+        return CreateSolidObject(name, center, size, sprite, sortingOrder, sceneryRoot);
+    }
+
+    private GameObject CreateSolidObject(string name, Vector2 center, Vector2 size, Sprite sprite, int sortingOrder, Transform parent, bool showFootprint = true)
+    {
         GameObject solid = new GameObject(name);
-        solid.transform.SetParent(sceneryRoot);
+        solid.transform.SetParent(parent);
         solid.transform.position = new Vector3(center.x, center.y, -0.05f);
 
         SpriteRenderer renderer = solid.AddComponent<SpriteRenderer>();
         renderer.sprite = sprite;
         renderer.sortingOrder = sortingOrder;
+
+        if (showFootprint)
+        {
+            GameObject footprint = new GameObject("Hitbox Footprint");
+            footprint.transform.SetParent(solid.transform);
+            footprint.transform.localPosition = new Vector3(0f, 0f, -0.01f);
+            footprint.transform.localScale = Vector3.one * 1.035f;
+            SpriteRenderer footprintRenderer = footprint.AddComponent<SpriteRenderer>();
+            footprintRenderer.sprite = AdvancedGameArt.FootprintSprite();
+            footprintRenderer.sortingOrder = sortingOrder + 1;
+        }
 
         BoxCollider2D collider = solid.AddComponent<BoxCollider2D>();
         collider.size = Vector2.one;
@@ -361,6 +512,42 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         return false;
     }
 
+    public Vector2 FindOpenDirection(Vector2 currentPosition, Vector2 desiredDirection, float radius)
+    {
+        if (desiredDirection.sqrMagnitude < 0.001f)
+        {
+            return Vector2.zero;
+        }
+
+        Vector2 desired = desiredDirection.normalized;
+        const float probeDistance = 0.62f;
+        if (IsCircleBlocked(currentPosition + desired * probeDistance, radius) == false)
+        {
+            return desired;
+        }
+
+        float[] angles = { 24f, -24f, 48f, -48f, 78f, -78f, 112f, -112f, 150f, -150f };
+        Vector2 best = Vector2.zero;
+        float bestScore = -999f;
+        for (int i = 0; i < angles.Length; i++)
+        {
+            Vector2 candidate = AdvancedGameMath.Rotate(desired, angles[i]).normalized;
+            if (IsCircleBlocked(currentPosition + candidate * probeDistance, radius))
+            {
+                continue;
+            }
+
+            float score = Vector2.Dot(candidate, desired) - Mathf.Abs(angles[i]) * 0.0025f;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+
+        return best == Vector2.zero ? desired : best;
+    }
+
     private bool CircleOverlapsRect(Vector2 center, float radius, Rect rect)
     {
         float closestX = Mathf.Clamp(center.x, rect.xMin, rect.xMax);
@@ -396,6 +583,11 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
     private void ApplyPermanentBonuses(AdvancedPlayerController target)
     {
+        if (PermanentUpgradesEnabled == false)
+        {
+            return;
+        }
+
         for (int i = 0; i < permanentUpgrades.Count; i++)
         {
             AdvancedPermanentUpgrade upgrade = permanentUpgrades[i];
@@ -450,6 +642,10 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         survivedSeconds += Time.deltaTime;
         nextWaveTimer -= Time.deltaTime;
         spawnTimer -= Time.deltaTime;
+        if (player != null)
+        {
+            RefreshEnvironmentChunks(player.transform.position, false);
+        }
 
         if (nextWaveTimer <= 0f)
         {
@@ -480,9 +676,18 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
             {
                 ClosePermanentUpgrades();
             }
+            else if (state == AdvancedGameState.Stats)
+            {
+                CloseStats();
+            }
         }
 
-        if (Input.GetKeyDown(KeyCode.U) && (state == AdvancedGameState.Playing || state == AdvancedGameState.Paused))
+        if (Input.GetKeyDown(KeyCode.Tab) && (state == AdvancedGameState.Playing || state == AdvancedGameState.Paused))
+        {
+            OpenStats(state);
+        }
+
+        if (PermanentUpgradesEnabled && Input.GetKeyDown(KeyCode.U) && (state == AdvancedGameState.Playing || state == AdvancedGameState.Paused))
         {
             OpenPermanentUpgrades(state);
         }
@@ -502,6 +707,12 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
     private void OpenPermanentUpgrades(AdvancedGameState returnState)
     {
+        if (PermanentUpgradesEnabled == false)
+        {
+            ShowNotice("Permanent upgrades are disabled for now");
+            return;
+        }
+
         upgradeReturnState = returnState;
         state = AdvancedGameState.PermanentUpgrades;
         Time.timeScale = 0f;
@@ -510,6 +721,19 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     private void ClosePermanentUpgrades()
     {
         state = upgradeReturnState;
+        Time.timeScale = state == AdvancedGameState.Playing ? 1f : 0f;
+    }
+
+    private void OpenStats(AdvancedGameState returnState)
+    {
+        statsReturnState = returnState;
+        state = AdvancedGameState.Stats;
+        Time.timeScale = 0f;
+    }
+
+    private void CloseStats()
+    {
+        state = statsReturnState;
         Time.timeScale = state == AdvancedGameState.Playing ? 1f : 0f;
     }
 
@@ -529,6 +753,15 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         {
             SpawnEnemy(AdvancedEnemyKind.Boss);
             ShowNotice("Boss wave!");
+        }
+    }
+
+    private void BringNextWaveCloser()
+    {
+        if (nextWaveTimer > 5f)
+        {
+            nextWaveTimer = 5f;
+            ShowNotice("Next wave in 5 seconds");
         }
     }
 
@@ -593,12 +826,32 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     public void SpawnPlayerBullet(Vector2 origin, Vector2 direction, float damage, float speed, int pierce, float sizeMultiplier, AdvancedProjectileKind projectileKind = AdvancedProjectileKind.Bullet, float maxDistance = 0f, float explosionRadius = 0f)
     {
         Color color = projectileKind == AdvancedProjectileKind.Magic ? new Color(0.78f, 0.42f, 1f) : new Color(0.9f, 0.82f, 0.55f);
-        SpawnBullet("Player Bullet", true, origin, direction, damage, speed, pierce, color, 0.18f * sizeMultiplier, projectileKind, maxDistance, explosionRadius);
+        float baseSize = projectileKind == AdvancedProjectileKind.Arrow ? 0.34f : projectileKind == AdvancedProjectileKind.Magic ? 0.25f : 0.2f;
+        SpawnBullet("Player Bullet", true, origin, direction, damage, speed, pierce, color, baseSize * sizeMultiplier, projectileKind, maxDistance, explosionRadius);
     }
 
     public void SpawnEnemyBullet(Vector2 origin, Vector2 direction, float damage, float speed)
     {
         SpawnBullet("Enemy Bullet", false, origin, direction, damage, speed, 0, new Color(1f, 0.28f, 0.55f), 0.22f, AdvancedProjectileKind.Bullet, 0f, 0f);
+    }
+
+    public void SpawnPlayerMine(Vector2 position, float damage, float radius, bool usePlayerAttackEffects = false)
+    {
+        GameObject mineObject = new GameObject("Player Mine");
+        mineObject.transform.SetParent(projectileRoot);
+        mineObject.transform.position = position;
+        mineObject.transform.localScale = Vector3.one * 0.62f;
+
+        SpriteRenderer renderer = mineObject.AddComponent<SpriteRenderer>();
+        renderer.sprite = AdvancedGameArt.MineSprite();
+        renderer.sortingOrder = 6;
+
+        CircleCollider2D collider = mineObject.AddComponent<CircleCollider2D>();
+        collider.radius = 0.62f;
+        collider.isTrigger = true;
+
+        AdvancedMine mine = mineObject.AddComponent<AdvancedMine>();
+        mine.Initialize(this, damage, radius, usePlayerAttackEffects);
     }
 
     private void SpawnBullet(string name, bool fromPlayer, Vector2 origin, Vector2 direction, float damage, float speed, int pierce, Color color, float size, AdvancedProjectileKind projectileKind, float maxDistance, float explosionRadius)
@@ -652,7 +905,13 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
                 continue;
             }
 
-            enemy.TakeDamage(damage);
+            bool critical = false;
+            float finalDamage = player != null ? player.RollAttackDamage(damage, enemy, out critical) : damage;
+            enemy.TakeDamage(finalDamage, critical);
+            if (player != null)
+            {
+                player.ApplyOnHitEffects(enemy, enemy.transform.position, finalDamage);
+            }
             hitSomething = true;
         }
 
@@ -663,7 +922,7 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         }
     }
 
-    public void DamageEnemiesInRadius(Vector2 origin, float radius, float damage)
+    public void DamageEnemiesInRadius(Vector2 origin, float radius, float damage, bool usePlayerAttackEffects = false)
     {
         for (int i = enemies.Count - 1; i >= 0; i--)
         {
@@ -675,15 +934,108 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
             if (Vector2.Distance(origin, enemy.transform.position) <= radius)
             {
-                enemy.TakeDamage(damage);
+                bool critical = false;
+                float finalDamage = usePlayerAttackEffects && player != null ? player.RollAttackDamage(damage, enemy, out critical) : damage;
+                enemy.TakeDamage(finalDamage, critical);
+                if (usePlayerAttackEffects && player != null)
+                {
+                    player.ApplyOnHitEffects(enemy, enemy.transform.position, finalDamage, false);
+                }
             }
         }
 
-        SpawnBurst(origin, new Color(0.8f, 0.35f, 1f), 14);
+        SpawnBurst(origin, new Color(1f, 0.48f, 0.16f), 16);
         if (cameraFollow != null)
         {
             cameraFollow.Shake(0.18f);
         }
+    }
+
+    public void StrikeLightning(Vector2 origin, float damage, float range, int jumps)
+    {
+        List<AdvancedEnemyController> hitEnemies = new List<AdvancedEnemyController>();
+        Vector2 source = origin;
+        int arcs = Mathf.Max(1, jumps + 1);
+        for (int i = 0; i < arcs; i++)
+        {
+            AdvancedEnemyController target = FindNearestEnemy(source, range, hitEnemies);
+            if (target == null)
+            {
+                break;
+            }
+
+            hitEnemies.Add(target);
+            bool critical = false;
+            float finalDamage = player != null ? player.RollAttackDamage(damage, target, out critical) : damage;
+            target.TakeDamage(finalDamage, critical);
+            if (player != null)
+            {
+                player.ApplyOnHitEffects(target, target.transform.position, finalDamage);
+            }
+
+            SpawnLightningArc(source, target.transform.position);
+            source = target.transform.position;
+        }
+
+        if (hitEnemies.Count > 0 && cameraFollow != null)
+        {
+            cameraFollow.Shake(0.1f + hitEnemies.Count * 0.025f);
+        }
+    }
+
+    private AdvancedEnemyController FindNearestEnemy(Vector2 origin, float range, List<AdvancedEnemyController> excluded)
+    {
+        AdvancedEnemyController best = null;
+        float bestDistance = range * range;
+        for (int i = enemies.Count - 1; i >= 0; i--)
+        {
+            AdvancedEnemyController enemy = enemies[i];
+            if (enemy == null || enemy.IsAlive == false || excluded.Contains(enemy))
+            {
+                continue;
+            }
+
+            float distance = ((Vector2)enemy.transform.position - origin).sqrMagnitude;
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = enemy;
+            }
+        }
+
+        return best;
+    }
+
+    private void SpawnLightningArc(Vector2 from, Vector2 to)
+    {
+        if (effectRoot == null)
+        {
+            return;
+        }
+
+        GameObject arc = new GameObject("Lightning Arc");
+        arc.transform.SetParent(effectRoot);
+        LineRenderer line = arc.AddComponent<LineRenderer>();
+        line.positionCount = 3;
+        line.useWorldSpace = true;
+        Vector2 midpoint = (from + to) * 0.5f + UnityEngine.Random.insideUnitCircle * 0.18f;
+        line.SetPosition(0, from);
+        line.SetPosition(1, midpoint);
+        line.SetPosition(2, to);
+        line.startWidth = 0.08f;
+        line.endWidth = 0.03f;
+        line.sortingOrder = 18;
+        Shader shader = Shader.Find("Sprites/Default");
+        if (shader != null)
+        {
+            line.material = new Material(shader);
+        }
+
+        Color color = new Color(0.58f, 0.92f, 1f, 1f);
+        line.startColor = color;
+        line.endColor = Color.white;
+        AdvancedLightningArc lightningArc = arc.AddComponent<AdvancedLightningArc>();
+        lightningArc.Initialize(line, color);
     }
 
     public void EnemyKilled(AdvancedEnemyController enemy, int xpReward, Vector3 position, bool isBoss)
@@ -692,6 +1044,19 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         kills++;
         SpawnXpPickup(position, xpReward);
         SpawnBurst(position, isBoss ? new Color(1f, 0.28f, 0.65f) : enemy.VisualColor, isBoss ? 20 : 8);
+
+        if (player != null && enemy != null)
+        {
+            if (player.WildfireTargets > 0 && enemy.HasBurn)
+            {
+                SpreadBurn(position, player.WildfireTargets, enemy.BurnDurationRemaining, enemy.BurnDamagePerSecond);
+            }
+
+            if (player.Contagion && enemy.HasPoison)
+            {
+                PoisonBurst(position);
+            }
+        }
 
         float pointChance = 0.045f + (player != null ? player.SalvageBonus : 0f);
         if (isBoss)
@@ -706,9 +1071,50 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
             AwardMetaPoints(1, "Salvage found");
         }
 
-        if (UnityEngine.Random.value < 0.055f)
+        float healthDropChance = 0.055f + (player != null ? player.FieldRationsDropChance : 0f);
+        if (UnityEngine.Random.value < healthDropChance)
         {
-            SpawnHealthPickup(position, 18f);
+            float healAmount = player != null && player.FieldRationsHealPercent > 0f ? Mathf.Max(18f, player.MaxHealth * player.FieldRationsHealPercent) : 18f;
+            SpawnHealthPickup(position, healAmount);
+        }
+    }
+
+    private void SpreadBurn(Vector3 position, int targetCount, float duration, float damagePerSecond)
+    {
+        int applied = 0;
+        for (int i = enemies.Count - 1; i >= 0 && applied < targetCount; i--)
+        {
+            AdvancedEnemyController target = enemies[i];
+            if (target == null || target.IsAlive == false)
+            {
+                continue;
+            }
+
+            if (Vector2.Distance(position, target.transform.position) > 3f)
+            {
+                continue;
+            }
+
+            target.ApplyStatus(AdvancedStatusEffect.Burn, Mathf.Max(2f, duration), Mathf.Max(1f, damagePerSecond), 1f);
+            applied++;
+        }
+    }
+
+    private void PoisonBurst(Vector3 position)
+    {
+        DamageEnemiesInRadius(position, 2.4f, player != null ? player.Damage * 0.2f : 8f, false);
+        if (player == null)
+        {
+            return;
+        }
+
+        for (int i = enemies.Count - 1; i >= 0; i--)
+        {
+            AdvancedEnemyController target = enemies[i];
+            if (target != null && target.IsAlive && Vector2.Distance(position, target.transform.position) <= 2.4f)
+            {
+                target.ApplyStatus(AdvancedStatusEffect.Poison, player.PoisonDuration, player.PoisonDamagePerSecond, 1f);
+            }
         }
     }
 
@@ -754,6 +1160,11 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
     public void AddXp(int amount)
     {
+        if (player != null)
+        {
+            amount = Mathf.Max(1, Mathf.RoundToInt(amount * player.ExperienceMultiplier));
+        }
+
         xp += amount;
         if (player != null)
         {
@@ -792,49 +1203,168 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         List<AdvancedUpgradeOption> pool = CreateUpgradePool();
         for (int i = 0; i < 3 && pool.Count > 0; i++)
         {
-            int index = UnityEngine.Random.Range(0, pool.Count);
+            int index = ChooseWeightedUpgradeIndex(pool);
             levelChoices.Add(pool[index]);
             pool.RemoveAt(index);
         }
     }
 
+    private int ChooseWeightedUpgradeIndex(List<AdvancedUpgradeOption> pool)
+    {
+        float totalWeight = 0f;
+        for (int i = 0; i < pool.Count; i++)
+        {
+            totalWeight += pool[i].Weight;
+        }
+
+        float roll = UnityEngine.Random.value * totalWeight;
+        for (int i = 0; i < pool.Count; i++)
+        {
+            roll -= pool[i].Weight;
+            if (roll <= 0f)
+            {
+                return i;
+            }
+        }
+
+        return pool.Count - 1;
+    }
+
+    private void AddUpgradeOption(List<AdvancedUpgradeOption> pool, AdvancedUpgradeOption option, int maxStacks = 0, bool allowed = true)
+    {
+        if (allowed == false)
+        {
+            return;
+        }
+
+        if (maxStacks > 0 && GetUpgradeStack(option.Title) >= maxStacks)
+        {
+            return;
+        }
+
+        pool.Add(option);
+    }
+
+    private int GetUpgradeStack(string title)
+    {
+        int count;
+        return upgradeStacks.TryGetValue(title, out count) ? count : 0;
+    }
+
+    private bool HasUpgrade(string title)
+    {
+        return GetUpgradeStack(title) > 0;
+    }
+
     private List<AdvancedUpgradeOption> CreateUpgradePool()
     {
-        return new List<AdvancedUpgradeOption>
+        List<AdvancedUpgradeOption> pool = new List<AdvancedUpgradeOption>();
+        AdvancedPlayerClass heroClass = selectedClass;
+
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Honed Weapon", "+18% direct attack damage.", AdvancedUpgradeRarity.Common, p => p.Damage *= 1.18f));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Faster Fire", "Attack interval -15%. Min 0.15s.", AdvancedUpgradeRarity.Common, p => p.FireDelay = Mathf.Max(0.15f, p.FireDelay * 0.85f)));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Move Speed", "+10% movement speed.", AdvancedUpgradeRarity.Common, p => p.MoveSpeed *= 1.1f));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Max Health", "+10% max HP and full heal.", AdvancedUpgradeRarity.Common, p => p.IncreaseMaxHealthPercent(0.1f)));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Fast Rounds", "+20% projectile speed.", AdvancedUpgradeRarity.Common, p => p.BulletSpeed *= 1.2f), 0, heroClass != AdvancedPlayerClass.Knight);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Piercing", "Arrows hit 1 extra enemy.", AdvancedUpgradeRarity.Common, p => p.PierceCount++), 0, heroClass == AdvancedPlayerClass.Archer);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Regen", "Heal 0.5% max HP per second.", AdvancedUpgradeRarity.Common, p => p.HealthRegen += p.MaxHealth * 0.005f));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Magnet", "XP pickup radius x1.35.", AdvancedUpgradeRarity.Common, p => p.MagnetRange *= 1.35f), 5);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Plated Vest", "+2 flat armor.", AdvancedUpgradeRarity.Common, p => p.FlatArmor += 2f));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Student of Battle", "+12% XP gained.", AdvancedUpgradeRarity.Common, p => p.ExperienceMultiplier += 0.12f));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Field Rations", "Enemies can drop stronger heals.", AdvancedUpgradeRarity.Common, p => p.ImproveFieldRations()));
+
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Mine Layer", "Drop a mine every 2.5s behind you.", AdvancedUpgradeRarity.Uncommon, p => p.EnableMines()), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Keen Eye", "+10 percentage points crit chance.", AdvancedUpgradeRarity.Uncommon, p => p.CritChance = Mathf.Min(0.75f, p.CritChance + 0.1f)));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Dash Charge", "Dash cooldown -20%. Min 1s.", AdvancedUpgradeRarity.Uncommon, p => p.DashCooldown = Mathf.Max(1f, p.DashCooldown * 0.8f)));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Big Projectiles", "+20% attack size and +10% damage.", AdvancedUpgradeRarity.Uncommon, p => p.GrowBullets()));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Executioner", "+30% damage to enemies below 25% HP.", AdvancedUpgradeRarity.Uncommon, p => p.ExecutionerBonus += p.ExecutionerBonus <= 0f ? 0.3f : 0.15f));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Giant Slayer", "+25% damage to elite enemies and bosses.", AdvancedUpgradeRarity.Uncommon, p => p.GiantSlayerBonus += p.GiantSlayerBonus <= 0f ? 0.25f : 0.15f));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Vampiric Edge", "Heal for 1% of direct damage dealt.", AdvancedUpgradeRarity.Uncommon, p => p.VampiricPercent += p.VampiricPercent <= 0f ? 0.01f : 0.005f));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Shockwave", "Every 10s, pulse around you for 30% damage.", AdvancedUpgradeRarity.Uncommon, p => p.ImproveShockwave()), 6);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Berserker", "Missing HP grants up to +35% damage.", AdvancedUpgradeRarity.Uncommon, p => p.ImproveBerserker()), 2);
+
+        if (player == null || player.BurnDamagePerSecond <= 0f)
         {
-            new AdvancedUpgradeOption("More Damage", "+25% bullet damage.", p => p.Damage *= 1.25f),
-            new AdvancedUpgradeOption("Faster Fire", "Shoot 18% faster.", p => p.FireDelay = Mathf.Max(0.07f, p.FireDelay * 0.82f)),
-            new AdvancedUpgradeOption("Move Speed", "+15% movement speed.", p => p.MoveSpeed *= 1.15f),
-            new AdvancedUpgradeOption("Max Health", "+25 max HP and full heal.", p => p.IncreaseMaxHealth(25f)),
-            new AdvancedUpgradeOption("Fast Rounds", "+25% bullet speed.", p => p.BulletSpeed *= 1.25f),
-            new AdvancedUpgradeOption("Piercing", "Bullets hit 1 extra enemy.", p => p.PierceCount++),
-            new AdvancedUpgradeOption("Regen", "Slowly heal during combat.", p => p.HealthRegen += 1.4f),
-            new AdvancedUpgradeOption("Multi Shot", "Add 1 extra spread shot.", p => p.MultiShot = Mathf.Min(6, p.MultiShot + 1)),
-            new AdvancedUpgradeOption("Big Bullets", "+20% bullet size and +10% damage.", p => p.GrowBullets()),
-            new AdvancedUpgradeOption("Magnet", "XP pickups fly in from farther away.", p => p.MagnetRange += 1.4f),
-            new AdvancedUpgradeOption("Dash Charge", "Dash cooldown is 25% shorter.", p => p.DashCooldown = Mathf.Max(0.65f, p.DashCooldown * 0.75f))
-        };
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Burning Edge", "Every direct hit applies short Burn.", AdvancedUpgradeRarity.Uncommon, p => p.AddBurn()), 1);
+        }
+        else
+        {
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Hotter Flames", "+4% hit damage per second as Burn.", AdvancedUpgradeRarity.Uncommon, p => p.AddBurnDamage()), 5);
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Long Burn", "+2s Burn duration.", AdvancedUpgradeRarity.Uncommon, p => p.AddBurnDuration()), 5);
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Wildfire", "Burn can spread when enemies die.", AdvancedUpgradeRarity.Epic, p => p.WildfireTargets++), 3);
+        }
+
+        if (player == null || player.PoisonDamagePerSecond <= 0f)
+        {
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Poison Vials", "Every direct hit applies short Poison.", AdvancedUpgradeRarity.Uncommon, p => p.AddPoison()), 1);
+        }
+        else
+        {
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Stronger Toxin", "+1% max HP poison damage per second.", AdvancedUpgradeRarity.Uncommon, p => p.AddPoisonDamage()), 5);
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Lingering Poison", "+2s Poison duration.", AdvancedUpgradeRarity.Uncommon, p => p.AddPoisonDuration()), 5);
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Contagion", "Poisoned kills burst poison nearby.", AdvancedUpgradeRarity.Epic, p => p.Contagion = true), 1);
+        }
+
+        if (player == null || player.FreezeDuration <= 0f)
+        {
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Frost Oil", "Every direct hit applies a short slow.", AdvancedUpgradeRarity.Uncommon, p => p.AddFreeze()), 1);
+        }
+        else
+        {
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Deep Chill", "+7.5 percentage points slow.", AdvancedUpgradeRarity.Uncommon, p => p.AddFreezeStrength()), 5);
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Long Freeze", "+2s slow duration.", AdvancedUpgradeRarity.Uncommon, p => p.AddFreezeDuration()), 5);
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Brittle", "Frosted enemies take more crit damage.", AdvancedUpgradeRarity.Epic, p => p.BrittleCritDamageBonus += p.BrittleCritDamageBonus <= 0f ? 0.15f : 0.1f));
+        }
+
+        bool hasAnyElement = player != null && (player.BurnDamagePerSecond > 0f || player.PoisonDamagePerSecond > 0f || player.FreezeDuration > 0f);
+        bool hasBurnAndPoison = player != null && player.BurnDamagePerSecond > 0f && player.PoisonDamagePerSecond > 0f;
+        bool hasBurnAndFreeze = player != null && player.BurnDamagePerSecond > 0f && player.FreezeDuration > 0f;
+        bool hasMineAndElement = player != null && player.MineInterval > 0f && hasAnyElement;
+        bool hasAllElements = player != null && player.BurnDamagePerSecond > 0f && player.PoisonDamagePerSecond > 0f && player.FreezeDuration > 0f;
+
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Lightning Rod", "Every 4s, lightning hits and chains.", AdvancedUpgradeRarity.Epic, p => p.ImproveLightning()), 0);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Explosive Hits", "Direct hits can explode for area damage.", AdvancedUpgradeRarity.Epic, p => p.AddExplosiveHits()), 0);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Critical Force", "+50 percentage points crit damage.", AdvancedUpgradeRarity.Epic, p => p.CritDamageMultiplier += 0.5f));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Reinforced Armor", "Take 12% less damage before flat armor.", AdvancedUpgradeRarity.Epic, p => p.ArmorPercent = Mathf.Min(0.65f, 1f - ((1f - p.ArmorPercent) * 0.88f))), 5);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Rapid Mines", "Mines drop faster, hit harder, and grow.", AdvancedUpgradeRarity.Epic, p => p.EnableMines(true)), 0, player != null && player.MineInterval > 0f);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Glass Cannon", "+40% damage, but +20% damage taken.", AdvancedUpgradeRarity.Epic, p => p.AddGlassCannon()), 5);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Guardian Angel", "Survive lethal damage once per cooldown.", AdvancedUpgradeRarity.Epic, p => p.EnableGuardianAngel()), 2);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Steam Burst", "Burning frosted enemies bursts steam.", AdvancedUpgradeRarity.Epic, p => p.SteamBurst = true), 1, hasBurnAndFreeze);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Toxic Flame", "Burn and Poison amplify each other.", AdvancedUpgradeRarity.Epic, p => p.AddToxicFlame()), 1, hasBurnAndPoison);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Volatile Mines", "Mines inherit elements and can proc explosions.", AdvancedUpgradeRarity.Epic, p => p.VolatileMines = true), 1, hasMineAndElement);
+
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Split Arrow", "Fire two side arrows at 45% damage.", AdvancedUpgradeRarity.Epic, p => p.AddSplitArrow()), 3, heroClass == AdvancedPlayerClass.Archer);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Hunter's Mark", "Hits mark enemies to take +20% Archer damage.", AdvancedUpgradeRarity.Epic, p => p.HunterMarkBonus += 0.2f), 1, heroClass == AdvancedPlayerClass.Archer);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Spell Echo", "Spells can repeat at 60% damage.", AdvancedUpgradeRarity.Epic, p => p.AddSpellEcho()), 3, heroClass == AdvancedPlayerClass.Mage);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Arcane Overload", "Every 5th spell is bigger and stronger.", AdvancedUpgradeRarity.Epic, p => p.EnableArcaneOverload()), 1, heroClass == AdvancedPlayerClass.Mage);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Cleave", "Sword swings wider and a little farther.", AdvancedUpgradeRarity.Epic, p => p.AddCleave()), 3, heroClass == AdvancedPlayerClass.Knight);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Counterattack", "After being hit, your next swing retaliates.", AdvancedUpgradeRarity.Epic, p => p.EnableCounterattack()), 2, heroClass == AdvancedPlayerClass.Knight);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Whirlwind", "Every 7s, your next swing is circular.", AdvancedUpgradeRarity.Epic, p => p.EnableWhirlwind()), 1, heroClass == AdvancedPlayerClass.Knight);
+
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Stormcaller", "Lightning becomes faster and chains harder.", AdvancedUpgradeRarity.Legendary, p => p.ImproveLightning(true)), 1, player != null && player.LightningInterval > 0f);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Demolition Expert", "Explosions get 1.5x chance, radius, and damage.", AdvancedUpgradeRarity.Legendary, p => p.AddExplosiveHits(true)), 1, player != null && player.ExplosionChance > 0f);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Assassin's Rhythm", "+15% crit chance and +75% crit damage.", AdvancedUpgradeRarity.Legendary, p => { p.CritChance = Mathf.Min(0.85f, p.CritChance + 0.15f); p.CritDamageMultiplier += 0.75f; }), 3);
+        if (hasAnyElement)
+        {
+            AddUpgradeOption(pool, new AdvancedUpgradeOption("Elemental Arsenal", "Improve all unlocked elements.", AdvancedUpgradeRarity.Legendary, p => { p.AddBurn(true); p.AddPoison(true); p.AddFreeze(true); }), 1);
+        }
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Phoenix Heart", "Revive once and blast nearby enemies.", AdvancedUpgradeRarity.Legendary, p => p.EnablePhoenixHeart()), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Worldbreaker", "Direct hits create secondary shockwaves.", AdvancedUpgradeRarity.Legendary, p => p.EnableWorldbreaker()), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Apex Predator", "+35% elite/boss damage and defense.", AdvancedUpgradeRarity.Legendary, p => p.EnableApexPredator()), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Elemental Tempest", "Periodic storm applies all elements nearby.", AdvancedUpgradeRarity.Legendary, p => p.EnableElementalTempest()), 1, hasAllElements);
+
+        return pool;
     }
 
     private void ApplyUpgrade(AdvancedUpgradeOption upgrade)
     {
         upgrade.Apply(player);
+        upgradeStacks[upgrade.Title] = GetUpgradeStack(upgrade.Title) + 1;
+        acquiredUpgrades.Add(upgrade.RarityName + " - " + upgrade.Title);
         state = AdvancedGameState.Playing;
         Time.timeScale = 1f;
         ShowNotice(upgrade.Title + " acquired");
         TryLevelUp();
-    }
-
-    private void RerollLevelChoices()
-    {
-        if (metaPoints <= 0)
-        {
-            return;
-        }
-
-        metaPoints--;
-        SaveProfile();
-        CreateLevelChoices();
     }
 
     private bool TryBuyPermanentUpgrade(AdvancedPermanentUpgrade upgrade)
@@ -950,6 +1480,11 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
             DrawNotice();
         }
 
+        if (state != AdvancedGameState.Playing)
+        {
+            DrawDimOverlay();
+        }
+
         if (state == AdvancedGameState.Paused)
         {
             DrawPausePanel();
@@ -961,6 +1496,10 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         else if (state == AdvancedGameState.PermanentUpgrades)
         {
             DrawPermanentUpgradePanel();
+        }
+        else if (state == AdvancedGameState.Stats)
+        {
+            DrawStatsPanel();
         }
         else if (state == AdvancedGameState.GameOver)
         {
@@ -976,11 +1515,11 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         }
 
         hudStyle = new GUIStyle(GUI.skin.label);
-        hudStyle.fontSize = 18;
+        hudStyle.fontSize = 23;
         hudStyle.normal.textColor = Color.white;
 
         smallStyle = new GUIStyle(GUI.skin.label);
-        smallStyle.fontSize = 14;
+        smallStyle.fontSize = 18;
         smallStyle.normal.textColor = new Color(0.82f, 0.88f, 0.95f);
         smallStyle.wordWrap = true;
 
@@ -988,67 +1527,93 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         centeredSmallStyle.alignment = TextAnchor.MiddleCenter;
 
         titleStyle = new GUIStyle(GUI.skin.label);
-        titleStyle.fontSize = 30;
+        titleStyle.fontSize = 34;
         titleStyle.fontStyle = FontStyle.Bold;
         titleStyle.alignment = TextAnchor.MiddleCenter;
         titleStyle.normal.textColor = Color.white;
 
         bigNumberStyle = new GUIStyle(titleStyle);
-        bigNumberStyle.fontSize = 48;
+        bigNumberStyle.fontSize = 44;
         bigNumberStyle.normal.textColor = new Color(0.5f, 0.9f, 1f);
 
         buttonStyle = new GUIStyle(GUI.skin.button);
-        buttonStyle.fontSize = 17;
+        buttonStyle.fontSize = 19;
         buttonStyle.wordWrap = true;
         buttonStyle.alignment = TextAnchor.MiddleCenter;
+
+        menuButtonStyle = new GUIStyle(buttonStyle);
+        menuButtonStyle.fontSize = 20;
+
+        optionButtonStyle = new GUIStyle(buttonStyle);
+        optionButtonStyle.fontSize = 17;
+        optionButtonStyle.padding = new RectOffset(16, 16, 10, 10);
+
+        panelHeaderStyle = new GUIStyle(hudStyle);
+        panelHeaderStyle.fontSize = 24;
+        panelHeaderStyle.fontStyle = FontStyle.Bold;
+        panelHeaderStyle.normal.textColor = new Color(0.75f, 0.9f, 1f);
+    }
+
+    private void DrawDimOverlay()
+    {
+        GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), AdvancedGameArt.Pixel(new Color(0f, 0f, 0f, 0.62f)));
     }
 
     private void DrawMainMenu()
     {
-        Rect panel = CenterRect(590f, 620f);
+        GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), AdvancedGameArt.Pixel(new Color(0.035f, 0.045f, 0.055f)));
+        Rect panel = CenterRect(760f, 610f);
         GUI.Box(panel, "");
-        GUILayout.BeginArea(new Rect(panel.x + 34f, panel.y + 26f, panel.width - 68f, panel.height - 52f));
-        GUILayout.Label("Infinite Shooter", titleStyle, GUILayout.Height(56f));
+        GUILayout.BeginArea(new Rect(panel.x + 32f, panel.y + 22f, panel.width - 64f, panel.height - 44f));
+        GUILayout.Label("Infinite Shooter", titleStyle, GUILayout.Height(48f));
         GUILayout.Label("Top-down survivor prototype", centeredSmallStyle, GUILayout.Height(26f));
-        GUILayout.Space(12f);
-        GUILayout.Label("Upgrade points: " + metaPoints, bigNumberStyle, GUILayout.Height(58f));
-        GUILayout.Space(10f);
-        GUILayout.Label("Choose your hero", centeredSmallStyle, GUILayout.Height(24f));
+        GUILayout.Label("Upgrade points: " + metaPoints, bigNumberStyle, GUILayout.Height(54f));
+        GUILayout.Label("Choose your hero", panelHeaderStyle, GUILayout.Height(28f));
         GUILayout.BeginHorizontal();
-        DrawClassCard(AdvancedPlayerClass.Archer, "Archer", "Draws a bow and fires piercing arrows.");
-        DrawClassCard(AdvancedPlayerClass.Knight, "Knight", "Armored melee fighter with a wide sword swing.");
-        DrawClassCard(AdvancedPlayerClass.Mage, "Mage", "Shorter range wand blasts that explode.");
+        DrawClassCard(AdvancedPlayerClass.Archer, "Archer", "Bow shots with pierce.");
+        DrawClassCard(AdvancedPlayerClass.Knight, "Knight", "Armored melee fighter.");
+        DrawClassCard(AdvancedPlayerClass.Mage, "Mage", "Exploding magic blasts.");
         GUILayout.EndHorizontal();
         GUILayout.Space(10f);
 
-        if (GUILayout.Button("Start Run", buttonStyle, GUILayout.Height(58f)))
+        if (GUILayout.Button("Start Run", menuButtonStyle, GUILayout.Height(52f)))
         {
             StartRun();
         }
 
-        GUILayout.Space(10f);
-        if (GUILayout.Button("Permanent Upgrades", buttonStyle, GUILayout.Height(54f)))
+        if (PermanentUpgradesEnabled)
         {
-            OpenPermanentUpgrades(AdvancedGameState.MainMenu);
+            GUILayout.Space(8f);
+            if (GUILayout.Button("Permanent Upgrades", menuButtonStyle, GUILayout.Height(48f)))
+            {
+                OpenPermanentUpgrades(AdvancedGameState.MainMenu);
+            }
+        }
+        else
+        {
+            GUILayout.Space(6f);
+            GUILayout.Label("Permanent upgrades disabled for this test build.", centeredSmallStyle, GUILayout.Height(28f));
         }
 
-        GUILayout.Space(10f);
-        if (GUILayout.Button("Quit", buttonStyle, GUILayout.Height(46f)))
+        GUILayout.Space(8f);
+        if (GUILayout.Button("Quit", menuButtonStyle, GUILayout.Height(44f)))
         {
             Application.Quit();
         }
 
-        GUILayout.Space(16f);
-        GUILayout.Label("Controls: WASD move, mouse aim, left click shoot, Space dash, U upgrades, Esc pause.", centeredSmallStyle, GUILayout.Height(60f));
+        GUILayout.Space(10f);
+        GUILayout.Label(PermanentUpgradesEnabled
+            ? "Controls: WASD move, mouse aim, left click shoot, Space dash, Tab stats, U upgrades, Esc pause."
+            : "Controls: WASD move, mouse aim, left click shoot, Space dash, Tab stats, Esc pause.", centeredSmallStyle, GUILayout.Height(54f));
         GUILayout.EndArea();
     }
 
     private void DrawClassCard(AdvancedPlayerClass heroClass, string title, string description)
     {
         Color oldColor = GUI.backgroundColor;
-        GUI.backgroundColor = selectedClass == heroClass ? new Color(0.42f, 0.74f, 1f) : Color.white;
-        string prefix = selectedClass == heroClass ? "Selected\n" : "";
-        if (GUILayout.Button(prefix + title + "\n" + description, buttonStyle, GUILayout.Height(94f), GUILayout.Width(154f)))
+        GUI.backgroundColor = selectedClass == heroClass ? new Color(0.25f, 0.78f, 1f) : new Color(0.86f, 0.9f, 0.95f);
+        string prefix = selectedClass == heroClass ? "SELECTED\n" : "Pick\n";
+        if (GUILayout.Button(prefix + title + "\n" + description, optionButtonStyle, GUILayout.Height(92f), GUILayout.Width(206f)))
         {
             selectedClass = heroClass;
         }
@@ -1062,20 +1627,28 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
             return;
         }
 
-        Rect box = new Rect(18f, 16f, 365f, 178f);
+        Rect box = new Rect(18f, 16f, 470f, 252f);
         GUI.Box(box, "");
-        DrawBar(new Rect(36f, 34f, 220f, 18f), player.HealthPercent, new Color(0.18f, 0.95f, 0.38f), new Color(0.2f, 0.05f, 0.07f));
-        GUI.Label(new Rect(266f, 30f, 105f, 24f), Mathf.CeilToInt(player.Health) + "/" + Mathf.CeilToInt(player.MaxHealth), smallStyle);
+        DrawBar(new Rect(38f, 38f, 285f, 22f), player.HealthPercent, new Color(0.18f, 0.95f, 0.38f), new Color(0.2f, 0.05f, 0.07f));
+        GUI.Label(new Rect(334f, 34f, 130f, 28f), Mathf.CeilToInt(player.Health) + "/" + Mathf.CeilToInt(player.MaxHealth), smallStyle);
 
-        DrawBar(new Rect(36f, 64f, 220f, 18f), xpToNextLevel > 0 ? Mathf.Clamp01((float)xp / xpToNextLevel) : 0f, new Color(0.35f, 0.72f, 1f), new Color(0.05f, 0.1f, 0.2f));
-        GUI.Label(new Rect(266f, 60f, 105f, 24f), xp + "/" + xpToNextLevel + " XP", smallStyle);
+        DrawBar(new Rect(38f, 74f, 285f, 22f), xpToNextLevel > 0 ? Mathf.Clamp01((float)xp / xpToNextLevel) : 0f, new Color(0.35f, 0.72f, 1f), new Color(0.05f, 0.1f, 0.2f));
+        GUI.Label(new Rect(334f, 70f, 130f, 28f), xp + "/" + xpToNextLevel + " XP", smallStyle);
 
-        DrawBar(new Rect(36f, 94f, 220f, 14f), player.DashFill, new Color(1f, 0.72f, 0.24f), new Color(0.18f, 0.12f, 0.05f));
-        GUI.Label(new Rect(266f, 88f, 105f, 24f), "Dash", smallStyle);
+        DrawBar(new Rect(38f, 110f, 285f, 18f), player.DashFill, new Color(1f, 0.72f, 0.24f), new Color(0.18f, 0.12f, 0.05f));
+        GUI.Label(new Rect(334f, 104f, 130f, 28f), "Dash", smallStyle);
 
-        GUI.Label(new Rect(36f, 120f, 330f, 24f), "Level " + level + "   Wave " + wave + "   Kills " + kills, hudStyle);
-        GUI.Label(new Rect(36f, 146f, 330f, 22f), "Next wave in " + Mathf.CeilToInt(Mathf.Max(0f, nextWaveTimer)) + "s   Enemies " + enemies.Count, smallStyle);
-        GUI.Label(new Rect(36f, 167f, 330f, 22f), "Upgrade points " + metaPoints + " (+" + runPointsEarned + " this run)", smallStyle);
+        GUI.Label(new Rect(38f, 142f, 400f, 30f), "Level " + level + "   Wave " + wave + "   Kills " + kills, hudStyle);
+        GUI.Label(new Rect(38f, 172f, 410f, 26f), "Next wave in " + Mathf.CeilToInt(Mathf.Max(0f, nextWaveTimer)) + "s   Enemies " + enemies.Count, smallStyle);
+        GUI.Label(new Rect(38f, 196f, 410f, 26f), "Upgrade points " + metaPoints + " (+" + runPointsEarned + " this run)", smallStyle);
+
+        bool canBringWaveCloser = state == AdvancedGameState.Playing && nextWaveTimer > 5f;
+        GUI.enabled = canBringWaveCloser;
+        if (GUI.Button(new Rect(38f, 224f, 410f, 30f), canBringWaveCloser ? "Next wave in 5s" : "Wave starts soon", buttonStyle))
+        {
+            BringNextWaveCloser();
+        }
+        GUI.enabled = true;
     }
 
     private void DrawNotice()
@@ -1095,69 +1668,85 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
     private void DrawPausePanel()
     {
-        Rect panel = CenterRect(420f, 330f);
+        Rect panel = CenterRect(480f, 430f);
         GUI.Box(panel, "");
         GUILayout.BeginArea(new Rect(panel.x + 28f, panel.y + 24f, panel.width - 56f, panel.height - 48f));
         GUILayout.Label("Paused", titleStyle, GUILayout.Height(52f));
 
-        if (GUILayout.Button("Resume", buttonStyle, GUILayout.Height(52f))) ResumeGame();
+        if (GUILayout.Button("Resume", menuButtonStyle, GUILayout.Height(54f))) ResumeGame();
         GUILayout.Space(8f);
-        if (GUILayout.Button("Permanent Upgrades", buttonStyle, GUILayout.Height(52f))) OpenPermanentUpgrades(AdvancedGameState.Paused);
+        if (GUILayout.Button("Stats / Current Build", menuButtonStyle, GUILayout.Height(54f))) OpenStats(AdvancedGameState.Paused);
+        if (PermanentUpgradesEnabled)
+        {
+            GUILayout.Space(8f);
+            if (GUILayout.Button("Permanent Upgrades", menuButtonStyle, GUILayout.Height(54f))) OpenPermanentUpgrades(AdvancedGameState.Paused);
+        }
         GUILayout.Space(8f);
-        if (GUILayout.Button("Restart Run", buttonStyle, GUILayout.Height(52f))) StartRun();
+        if (GUILayout.Button("Restart Run", menuButtonStyle, GUILayout.Height(54f))) StartRun();
         GUILayout.Space(8f);
-        if (GUILayout.Button("Main Menu", buttonStyle, GUILayout.Height(52f))) ShowMainMenu();
+        if (GUILayout.Button("Main Menu", menuButtonStyle, GUILayout.Height(54f))) ShowMainMenu();
 
         GUILayout.EndArea();
     }
 
     private void DrawLevelUpPanel()
     {
-        Rect panel = CenterRect(520f, 430f);
+        Rect panel = CenterRect(820f, 570f);
         GUI.Box(panel, "");
-        GUILayout.BeginArea(new Rect(panel.x + 26f, panel.y + 22f, panel.width - 52f, panel.height - 44f));
-        GUILayout.Label("Level up! Choose an upgrade", titleStyle, GUILayout.Height(52f));
+        GUILayout.BeginArea(new Rect(panel.x + 34f, panel.y + 26f, panel.width - 68f, panel.height - 52f));
+        GUILayout.Label("Level up! Choose an upgrade", titleStyle, GUILayout.Height(56f));
         GUILayout.Space(8f);
 
         for (int i = 0; i < levelChoices.Count; i++)
         {
             AdvancedUpgradeOption upgrade = levelChoices[i];
-            if (GUILayout.Button(upgrade.Title + "\n" + upgrade.Description, buttonStyle, GUILayout.Height(76f)))
+            Color oldColor = GUI.backgroundColor;
+            GUI.backgroundColor = upgrade.RarityColor;
+            if (GUILayout.Button(upgrade.RarityName + " - " + upgrade.Title + "\n" + upgrade.Description, optionButtonStyle, GUILayout.Height(116f)))
             {
                 ApplyUpgrade(upgrade);
             }
 
-            GUILayout.Space(8f);
+            GUI.backgroundColor = oldColor;
+            GUILayout.Space(10f);
         }
 
-        GUI.enabled = metaPoints > 0;
-        if (GUILayout.Button("Reroll choices (1 upgrade point)", buttonStyle, GUILayout.Height(44f)))
-        {
-            RerollLevelChoices();
-        }
-        GUI.enabled = true;
         GUILayout.EndArea();
     }
 
     private void DrawPermanentUpgradePanel()
     {
-        Rect panel = CenterRect(760f, 560f);
+        Rect panel = CenterRect(820f, 620f);
         GUI.Box(panel, "");
         GUILayout.BeginArea(new Rect(panel.x + 28f, panel.y + 22f, panel.width - 56f, panel.height - 44f));
         GUILayout.Label("Permanent Upgrades", titleStyle, GUILayout.Height(48f));
+        if (PermanentUpgradesEnabled == false)
+        {
+            GUILayout.Label("Permanent upgrades are disabled for now.", centeredSmallStyle, GUILayout.Height(70f));
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(upgradeReturnState == AdvancedGameState.MainMenu ? "Back to Menu" : "Back", menuButtonStyle, GUILayout.Height(52f)))
+            {
+                ClosePermanentUpgrades();
+            }
+
+            GUILayout.EndArea();
+            return;
+        }
+
         GUILayout.Label("Spend upgrade points during or between runs. Points: " + metaPoints, centeredSmallStyle, GUILayout.Height(26f));
         GUILayout.Space(10f);
 
+        permanentScroll = GUILayout.BeginScrollView(permanentScroll, false, true, GUILayout.Height(panel.height - 160f));
         for (int i = 0; i < permanentUpgrades.Count; i++)
         {
             AdvancedPermanentUpgrade upgrade = permanentUpgrades[i];
             GUILayout.BeginHorizontal(GUILayout.Height(54f));
-            GUILayout.Label(upgrade.Title + "  " + upgrade.Level + "/" + upgrade.MaxLevel + "\n" + upgrade.Description, smallStyle, GUILayout.Width(470f));
+            GUILayout.Label(upgrade.Title + "  " + upgrade.Level + "/" + upgrade.MaxLevel + "\n" + upgrade.Description, smallStyle, GUILayout.Width(530f));
 
             bool canBuy = upgrade.Level < upgrade.MaxLevel && metaPoints >= upgrade.Cost;
             GUI.enabled = canBuy;
             string label = upgrade.Level >= upgrade.MaxLevel ? "MAX" : "Buy (" + upgrade.Cost + ")";
-            if (GUILayout.Button(label, buttonStyle, GUILayout.Width(150f), GUILayout.Height(48f)))
+            if (GUILayout.Button(label, buttonStyle, GUILayout.Width(150f), GUILayout.Height(50f)))
             {
                 TryBuyPermanentUpgrade(upgrade);
             }
@@ -1165,14 +1754,132 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
             GUILayout.EndHorizontal();
             GUILayout.Space(5f);
         }
+        GUILayout.EndScrollView();
 
-        GUILayout.FlexibleSpace();
-        if (GUILayout.Button(upgradeReturnState == AdvancedGameState.MainMenu ? "Back to Menu" : "Back", buttonStyle, GUILayout.Height(48f)))
+        GUILayout.Space(10f);
+        if (GUILayout.Button(upgradeReturnState == AdvancedGameState.MainMenu ? "Back to Menu" : "Back", menuButtonStyle, GUILayout.Height(52f)))
         {
             ClosePermanentUpgrades();
         }
 
         GUILayout.EndArea();
+    }
+
+    private void DrawStatsPanel()
+    {
+        Rect panel = CenterRect(820f, 650f);
+        GUI.Box(panel, "");
+        GUILayout.BeginArea(new Rect(panel.x + 34f, panel.y + 26f, panel.width - 68f, panel.height - 52f));
+        GUILayout.Label("Current Build", titleStyle, GUILayout.Height(58f));
+
+        statsScroll = GUILayout.BeginScrollView(statsScroll, false, true, GUILayout.Height(panel.height - 150f));
+        if (player == null)
+        {
+            GUILayout.Label("No active run stats yet.", centeredSmallStyle, GUILayout.Height(32f));
+        }
+        else
+        {
+            GUILayout.Label("Core Stats", panelHeaderStyle, GUILayout.Height(32f));
+            DrawStatLine("Class", player.Class.ToString());
+            DrawStatLine("Damage", FormatNumber(player.Damage));
+            DrawStatLine("Attack speed", FormatNumber(1f / Mathf.Max(0.01f, player.FireDelay)) + " attacks/s");
+            DrawStatLine("Attack delay", FormatNumber(player.FireDelay) + "s");
+            DrawStatLine("Projectile speed", player.BulletSpeed > 0f ? FormatNumber(player.BulletSpeed) : "Melee");
+            if (player.Class == AdvancedPlayerClass.Knight)
+            {
+                DrawStatLine("Melee range", FormatNumber(player.MeleeRange) + " / " + Mathf.RoundToInt(player.MeleeArcDegrees) + " deg");
+            }
+            else if (player.Class == AdvancedPlayerClass.Mage)
+            {
+                DrawStatLine("Magic range", FormatNumber(player.MagicRange) + " / radius " + FormatNumber(player.MagicExplosionRadius));
+            }
+            else
+            {
+                DrawStatLine("Arrow range", "Unlimited");
+            }
+            DrawStatLine("Pierce", player.PierceCount.ToString());
+            DrawStatLine("Move speed", FormatNumber(player.MoveSpeed));
+            DrawStatLine("Dash cooldown", FormatNumber(player.DashCooldown) + "s");
+            DrawStatLine("XP gain", Mathf.RoundToInt(player.ExperienceMultiplier * 100f) + "%");
+            GUILayout.Space(10f);
+
+            GUILayout.Label("Defense", panelHeaderStyle, GUILayout.Height(32f));
+            DrawStatLine("Health", Mathf.CeilToInt(player.Health) + "/" + Mathf.CeilToInt(player.MaxHealth));
+            DrawStatLine("Regen", FormatNumber(player.HealthRegen) + " hp/s");
+            DrawStatLine("Flat armor", FormatNumber(player.FlatArmor));
+            DrawStatLine("Armor percent", Mathf.RoundToInt(player.ArmorPercent * 100f) + "%");
+            DrawStatLine("Damage taken", Mathf.RoundToInt(player.DamageTakenMultiplier * 100f) + "%");
+            DrawStatLine("Guardian", player.GuardianAngelAvailable ? "Ready / " + FormatNumber(player.GuardianAngelCooldown) + "s cd" : "Locked");
+            DrawStatLine("Phoenix", player.PhoenixHeartAvailable ? "Ready" : "Locked");
+            GUILayout.Space(10f);
+
+            GUILayout.Label("Crits", panelHeaderStyle, GUILayout.Height(32f));
+            DrawStatLine("Crit chance", Mathf.RoundToInt(player.CritChance * 100f) + "%");
+            DrawStatLine("Crit damage", Mathf.RoundToInt(player.CritDamageMultiplier * 100f) + "%");
+            DrawStatLine("Brittle bonus", Mathf.RoundToInt(player.BrittleCritDamageBonus * 100f) + "%");
+            GUILayout.Space(10f);
+
+            GUILayout.Label("Weapons & Effects", panelHeaderStyle, GUILayout.Height(32f));
+            DrawStatLine("Burn", player.BurnDamagePerSecond > 0f ? Mathf.RoundToInt(player.BurnDamagePerSecond * 100f) + "% hit dmg/s for " + FormatNumber(player.BurnDuration) + "s" : "Locked");
+            DrawStatLine("Poison", player.PoisonDamagePerSecond > 0f ? FormatNumber(player.PoisonDamagePerSecond * 100f) + "% max HP/s for " + FormatNumber(player.PoisonDuration) + "s" : "Locked");
+            DrawStatLine("Freeze", player.FreezeDuration > 0f ? Mathf.RoundToInt((1f - player.FreezeSlowMultiplier) * 100f) + "% slow for " + FormatNumber(player.FreezeDuration) + "s" : "Locked");
+            DrawStatLine("Mines", player.MineInterval > 0f ? FormatNumber(player.MineDamage) + " dmg / " + FormatNumber(player.MineInterval) + "s" : "Locked");
+            DrawStatLine("Lightning", player.LightningInterval > 0f ? FormatNumber(player.LightningDamage) + " dmg / " + FormatNumber(player.LightningInterval) + "s, jumps " + player.LightningJumps : "Locked");
+            DrawStatLine("Explosions", player.ExplosionChance > 0f ? Mathf.RoundToInt(player.ExplosionChance * 100f) + "% chance, radius " + FormatNumber(player.ExplosionRadius) : "Locked");
+            DrawStatLine("Shockwave", player.ShockwaveInterval > 0f ? FormatNumber(player.ShockwaveInterval) + "s / " + Mathf.RoundToInt(player.ShockwaveDamageMultiplier * 100f) + "% dmg" : "Locked");
+            DrawStatLine("Vampiric", player.VampiricPercent > 0f ? FormatNumber(player.VampiricPercent * 100f) + "% lifesteal" : "Locked");
+            DrawStatLine("Class perk", ClassPerkSummary(player));
+            GUILayout.Space(10f);
+        }
+
+        GUILayout.Label("Chosen Upgrades", panelHeaderStyle, GUILayout.Height(32f));
+        if (acquiredUpgrades.Count == 0)
+        {
+            GUILayout.Label("No level-up upgrades chosen yet.", smallStyle, GUILayout.Height(28f));
+        }
+        else
+        {
+            for (int i = 0; i < acquiredUpgrades.Count; i++)
+            {
+                GUILayout.Label((i + 1) + ". " + acquiredUpgrades[i], smallStyle, GUILayout.Height(28f));
+            }
+        }
+
+        GUILayout.EndScrollView();
+        GUILayout.Space(12f);
+        if (GUILayout.Button(statsReturnState == AdvancedGameState.Playing ? "Back to Game" : "Back", menuButtonStyle, GUILayout.Height(54f)))
+        {
+            CloseStats();
+        }
+
+        GUILayout.EndArea();
+    }
+
+    private void DrawStatLine(string label, string value)
+    {
+        GUILayout.BeginHorizontal(GUILayout.Height(28f));
+        GUILayout.Label(label, smallStyle, GUILayout.Width(250f));
+        GUILayout.Label(value, smallStyle);
+        GUILayout.EndHorizontal();
+    }
+
+    private string ClassPerkSummary(AdvancedPlayerController target)
+    {
+        if (target.Class == AdvancedPlayerClass.Archer)
+        {
+            return target.SideArrowCount > 0 ? target.SideArrowCount + " side arrows, mark +" + Mathf.RoundToInt(target.HunterMarkBonus * 100f) + "%" : "Locked";
+        }
+
+        if (target.Class == AdvancedPlayerClass.Mage)
+        {
+            return target.SpellEchoChance > 0f || target.ArcaneOverload
+                ? Mathf.RoundToInt(target.SpellEchoChance * 100f) + "% echo, overload " + (target.ArcaneOverload ? "on" : "off")
+                : "Locked";
+        }
+
+        return target.WhirlwindEnabled || target.CounterattackEnabled
+            ? "counter " + (target.CounterattackEnabled ? "on" : "off") + ", whirlwind " + (target.WhirlwindEnabled ? "on" : "off")
+            : "Locked";
     }
 
     private void DrawGameOverPanel()
@@ -1188,8 +1895,11 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
         if (GUILayout.Button("Run Again", buttonStyle, GUILayout.Height(54f))) StartRun();
         GUILayout.Space(8f);
-        if (GUILayout.Button("Permanent Upgrades", buttonStyle, GUILayout.Height(50f))) OpenPermanentUpgrades(AdvancedGameState.GameOver);
-        GUILayout.Space(8f);
+        if (PermanentUpgradesEnabled)
+        {
+            if (GUILayout.Button("Permanent Upgrades", buttonStyle, GUILayout.Height(50f))) OpenPermanentUpgrades(AdvancedGameState.GameOver);
+            GUILayout.Space(8f);
+        }
         if (GUILayout.Button("Main Menu", buttonStyle, GUILayout.Height(50f))) ShowMainMenu();
 
         GUILayout.EndArea();
@@ -1197,13 +1907,20 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
     private Rect CenterRect(float width, float height)
     {
-        return new Rect(Screen.width * 0.5f - width * 0.5f, Screen.height * 0.5f - height * 0.5f, width, height);
+        float safeWidth = Mathf.Min(width, Mathf.Max(320f, Screen.width - 32f));
+        float safeHeight = Mathf.Min(height, Mathf.Max(260f, Screen.height - 32f));
+        return new Rect(Screen.width * 0.5f - safeWidth * 0.5f, Screen.height * 0.5f - safeHeight * 0.5f, safeWidth, safeHeight);
     }
 
     private string FormatTime(float seconds)
     {
         int total = Mathf.FloorToInt(seconds);
         return total / 60 + ":" + (total % 60).ToString("00");
+    }
+
+    private string FormatNumber(float value)
+    {
+        return value.ToString("0.##");
     }
 }
 
@@ -1216,13 +1933,24 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
     private AdvancedPlayerClass playerClass;
     private Vector2 aimDirection = Vector2.right;
     private Vector2 dashDirection = Vector2.right;
+    private Vector2 lastMoveDirection = Vector2.right;
     private float shotCooldown;
     private float invulnerabilityTimer;
     private float dashTimer;
     private float dashCooldownTimer;
     private float attackAnimTimer;
     private float drawTimer;
+    private float mineTimer;
+    private float lightningTimer;
+    private float shockwaveTimer;
+    private float elementalTempestTimer;
+    private float elementalTempestActiveTimer;
+    private float elementalTempestTickTimer;
+    private float counterattackTimer;
+    private float guardianAngelCooldownTimer;
+    private float whirlwindTimer;
     private float bulletScale = 1f;
+    private int spellCounter;
     private bool isDrawing;
 
     public float MoveSpeed { get; set; }
@@ -1235,22 +1963,135 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
     public float MagnetRange { get; set; }
     public float DashCooldown { get; set; }
     public float SalvageBonus { get; set; }
+    public float CritChance { get; set; }
+    public float CritDamageMultiplier { get; set; }
+    public float FlatArmor { get; set; }
+    public float ArmorPercent { get; set; }
+    public float BurnDamagePerSecond { get; set; }
+    public float BurnDuration { get; set; }
+    public float PoisonDamagePerSecond { get; set; }
+    public float PoisonDuration { get; set; }
+    public float FreezeDuration { get; set; }
+    public float FreezeSlowMultiplier { get; set; }
+    public float MineInterval { get; set; }
+    public float MineDamage { get; set; }
+    public float MineRadius { get; set; }
+    public float LightningInterval { get; set; }
+    public float LightningDamage { get; set; }
+    public float LightningRange { get; set; }
+    public int LightningJumps { get; set; }
+    public float ExplosionChance { get; set; }
+    public float ExplosionRadius { get; set; }
+    public float ExplosionDamageMultiplier { get; set; }
     public int PierceCount { get; set; }
-    public int MultiShot { get; set; }
+    public float MeleeRange { get; set; }
+    public float MeleeArcDegrees { get; set; }
+    public float MagicRange { get; set; }
+    public float MagicExplosionRadius { get; set; }
+    public float ExperienceMultiplier { get; set; }
+    public float FieldRationsDropChance { get; set; }
+    public float FieldRationsHealPercent { get; set; }
+    public float ExecutionerBonus { get; set; }
+    public float GiantSlayerBonus { get; set; }
+    public float EliteDamageReduction { get; set; }
+    public float DamageTakenMultiplier { get; set; }
+    public float VampiricPercent { get; set; }
+    public float ShockwaveInterval { get; set; }
+    public float ShockwaveDamageMultiplier { get; set; }
+    public float ShockwaveRadius { get; set; }
+    public float BerserkerMaxBonus { get; set; }
+    public float BrittleCritDamageBonus { get; set; }
+    public float HunterMarkBonus { get; set; }
+    public int SideArrowCount { get; set; }
+    public float SideArrowDamageMultiplier { get; set; }
+    public float SpellEchoChance { get; set; }
+    public float SpellEchoDamageMultiplier { get; set; }
+    public float GuardianAngelCooldown { get; set; }
+    public float WorldbreakerDamageMultiplier { get; set; }
+    public float WorldbreakerRadius { get; set; }
+    public int WildfireTargets { get; set; }
+    public bool Contagion { get; set; }
+    public bool SteamBurst { get; set; }
+    public bool ToxicFlame { get; set; }
+    public bool VolatileMines { get; set; }
+    public bool GuardianAngelAvailable { get; set; }
+    public bool PhoenixHeartAvailable { get; set; }
+    public bool ApexPredator { get; set; }
+    public bool ArcaneOverload { get; set; }
+    public bool CounterattackEnabled { get; set; }
+    public bool WhirlwindEnabled { get; set; }
+    public bool ElementalTempestEnabled { get; set; }
 
     public float HealthPercent { get { return MaxHealth <= 0f ? 0f : Mathf.Clamp01(Health / MaxHealth); } }
     public float DashFill { get { return DashCooldown <= 0f ? 1f : 1f - Mathf.Clamp01(dashCooldownTimer / DashCooldown); } }
+    public AdvancedPlayerClass Class { get { return playerClass; } }
 
     public void Initialize(AdvancedGameWorld owner, AdvancedPlayerClass heroClass)
     {
         world = owner;
         playerClass = heroClass;
-        ConfigureClassStats(heroClass);
-        Health = MaxHealth;
         HealthRegen = 0f;
         MagnetRange = 2.2f;
         SalvageBonus = 0f;
-        MultiShot = 1;
+        CritChance = 0.05f;
+        CritDamageMultiplier = 1.5f;
+        FlatArmor = 0f;
+        ArmorPercent = 0f;
+        BurnDamagePerSecond = 0f;
+        BurnDuration = 0f;
+        PoisonDamagePerSecond = 0f;
+        PoisonDuration = 0f;
+        FreezeDuration = 0f;
+        FreezeSlowMultiplier = 1f;
+        MineInterval = 0f;
+        MineDamage = 0f;
+        MineRadius = 1.5f;
+        LightningInterval = 0f;
+        LightningDamage = 0f;
+        LightningRange = 10f;
+        LightningJumps = 0;
+        ExplosionChance = 0f;
+        ExplosionRadius = 1.8f;
+        ExplosionDamageMultiplier = 0.8f;
+        MeleeRange = 1.85f;
+        MeleeArcDegrees = 112f;
+        MagicRange = 5.7f;
+        MagicExplosionRadius = 1.25f;
+        ExperienceMultiplier = 1f;
+        FieldRationsDropChance = 0f;
+        FieldRationsHealPercent = 0f;
+        ExecutionerBonus = 0f;
+        GiantSlayerBonus = 0f;
+        EliteDamageReduction = 0f;
+        DamageTakenMultiplier = 1f;
+        VampiricPercent = 0f;
+        ShockwaveInterval = 0f;
+        ShockwaveDamageMultiplier = 0f;
+        ShockwaveRadius = 10f;
+        BerserkerMaxBonus = 0f;
+        BrittleCritDamageBonus = 0f;
+        HunterMarkBonus = 0f;
+        SideArrowCount = 0;
+        SideArrowDamageMultiplier = 0.45f;
+        SpellEchoChance = 0f;
+        SpellEchoDamageMultiplier = 0.6f;
+        GuardianAngelCooldown = 60f;
+        WorldbreakerDamageMultiplier = 0f;
+        WorldbreakerRadius = 2.2f;
+        WildfireTargets = 0;
+        Contagion = false;
+        SteamBurst = false;
+        ToxicFlame = false;
+        VolatileMines = false;
+        GuardianAngelAvailable = false;
+        PhoenixHeartAvailable = false;
+        ApexPredator = false;
+        ArcaneOverload = false;
+        CounterattackEnabled = false;
+        WhirlwindEnabled = false;
+        ElementalTempestEnabled = false;
+        ConfigureClassStats(heroClass);
+        Health = MaxHealth;
         spriteRenderer = GetComponent<SpriteRenderer>();
         spriteRenderer.sprite = AdvancedGameArt.HeroSprite(playerClass, AdvancedHeroAnimation.Idle, 0);
 
@@ -1273,26 +2114,31 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
         switch (heroClass)
         {
             case AdvancedPlayerClass.Knight:
-                MoveSpeed = 4.6f;
-                Damage = 34f;
-                FireDelay = 0.58f;
+                MoveSpeed = 4.7f;
+                Damage = 40f;
+                FireDelay = 0.62f;
                 BulletSpeed = 0f;
-                MaxHealth = 140f;
+                MaxHealth = 150f;
                 DashCooldown = 2.8f;
+                ArmorPercent = 0.12f;
+                MeleeRange = 2.35f;
+                MeleeArcDegrees = 118f;
                 break;
             case AdvancedPlayerClass.Mage:
-                MoveSpeed = 4.85f;
-                Damage = 25f;
-                FireDelay = 0.72f;
-                BulletSpeed = 8.4f;
+                MoveSpeed = 4.55f;
+                Damage = 42f;
+                FireDelay = 0.95f;
+                BulletSpeed = 8.2f;
                 MaxHealth = 82f;
+                MagicRange = 7f;
+                MagicExplosionRadius = 1.65f;
                 break;
             default:
-                MoveSpeed = 5.35f;
-                Damage = 19f;
-                FireDelay = 0.42f;
-                BulletSpeed = 15.5f;
-                MaxHealth = 92f;
+                MoveSpeed = 5.6f;
+                Damage = 20f;
+                FireDelay = 0.38f;
+                BulletSpeed = 17f;
+                MaxHealth = 78f;
                 PierceCount = 1;
                 break;
         }
@@ -1321,6 +2167,7 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
         HandleMovement();
         HandleAiming();
         HandleShooting();
+        HandlePassiveWeapons();
         Regenerate();
         UpdateTimers();
         UpdateAnimation();
@@ -1334,6 +2181,10 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
         if (Input.GetKey(KeyCode.D)) input.x += 1f;
         if (Input.GetKey(KeyCode.A)) input.x -= 1f;
         if (input.sqrMagnitude > 1f) input.Normalize();
+        if (input.sqrMagnitude > 0.05f)
+        {
+            lastMoveDirection = input.normalized;
+        }
 
         if (Input.GetKeyDown(KeyCode.Space) && dashCooldownTimer <= 0f)
         {
@@ -1370,7 +2221,7 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
 
     private float WeaponRotationOffset()
     {
-        return playerClass == AdvancedPlayerClass.Archer ? 0f : -90f;
+        return playerClass == AdvancedPlayerClass.Archer ? 180f : -90f;
     }
 
     private void HandleShooting()
@@ -1393,12 +2244,45 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
         if (playerClass == AdvancedPlayerClass.Knight)
         {
             Vector2 origin = transform.position;
-            world.PerformPlayerMelee(origin, aimDirection, 1.85f + bulletScale * 0.12f, 112f, Damage);
+            float attackDamage = Damage;
+            float range = MeleeRange + bulletScale * 0.12f;
+            float arc = MeleeArcDegrees;
+            if (CounterattackEnabled && counterattackTimer > 0f)
+            {
+                attackDamage *= 1.8f;
+                counterattackTimer = 0f;
+                world.DamageEnemiesInRadius(origin + aimDirection * Mathf.Min(range, 1.8f), 1.45f, Damage * 0.6f, false);
+            }
+
+            if (WhirlwindEnabled && whirlwindTimer <= 0f)
+            {
+                attackDamage *= 1.4f;
+                range += 0.35f;
+                arc = 360f;
+                whirlwindTimer = Mathf.Max(3f, 7f * Mathf.Clamp(FireDelay / 0.62f, 0.45f, 1f));
+            }
+
+            world.PerformPlayerMelee(origin, aimDirection, range, arc, attackDamage);
             return;
         }
 
         Vector2 magicOrigin = (Vector2)transform.position + aimDirection * 0.72f;
-        world.SpawnPlayerBullet(magicOrigin, aimDirection, Damage, BulletSpeed, 0, bulletScale * 1.15f, AdvancedProjectileKind.Magic, 5.7f, 1.25f);
+        spellCounter++;
+        float magicDamage = Damage;
+        float magicScale = bulletScale * 1.15f;
+        float magicRadius = MagicExplosionRadius;
+        if (ArcaneOverload && spellCounter % 5 == 0)
+        {
+            magicDamage *= 1.8f;
+            magicScale *= 1.4f;
+            magicRadius *= 1.4f;
+        }
+
+        world.SpawnPlayerBullet(magicOrigin, aimDirection, magicDamage, BulletSpeed, 0, magicScale, AdvancedProjectileKind.Magic, MagicRange, magicRadius);
+        if (SpellEchoChance > 0f && UnityEngine.Random.value < SpellEchoChance)
+        {
+            StartCoroutine(SpawnMagicEcho(magicOrigin, aimDirection, magicDamage * SpellEchoDamageMultiplier, magicScale, magicRadius));
+        }
     }
 
     private void HandleArcherAttack()
@@ -1430,15 +2314,82 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
 
         isDrawing = false;
         shotCooldown = FireDelay;
-        int shots = Mathf.Max(1, MultiShot);
-        float totalSpread = shots == 1 ? 0f : Mathf.Min(34f, 8.5f * (shots - 1));
-
-        for (int i = 0; i < shots; i++)
+        Vector2 origin = (Vector2)transform.position + aimDirection * (0.72f + bulletScale * 0.08f);
+        world.SpawnPlayerBullet(origin, aimDirection, Damage, BulletSpeed, PierceCount, bulletScale, AdvancedProjectileKind.Arrow, 0f, 0f);
+        for (int i = 0; i < SideArrowCount; i++)
         {
-            float angle = shots == 1 ? 0f : -totalSpread * 0.5f + totalSpread * i / (shots - 1);
-            Vector2 direction = AdvancedGameMath.Rotate(aimDirection, angle);
-            Vector2 origin = (Vector2)transform.position + direction * (0.72f + bulletScale * 0.08f);
-            world.SpawnPlayerBullet(origin, direction, Damage, BulletSpeed, PierceCount, bulletScale, AdvancedProjectileKind.Arrow, 0f, 0f);
+            int side = i % 2 == 0 ? 1 : -1;
+            int layer = i / 2 + 1;
+            Vector2 sideDirection = AdvancedGameMath.Rotate(aimDirection, side * 15f * layer).normalized;
+            world.SpawnPlayerBullet(origin, sideDirection, Damage * SideArrowDamageMultiplier, BulletSpeed, Mathf.Max(0, PierceCount - 1), bulletScale * 0.95f, AdvancedProjectileKind.Arrow, 0f, 0f);
+        }
+    }
+
+    private IEnumerator SpawnMagicEcho(Vector2 origin, Vector2 direction, float damage, float scale, float radius)
+    {
+        yield return new WaitForSeconds(0.25f);
+        if (world != null && world.IsGameplayPaused == false)
+        {
+            world.SpawnPlayerBullet(origin, direction, damage, BulletSpeed, 0, scale, AdvancedProjectileKind.Magic, MagicRange, radius);
+        }
+    }
+
+    private void HandlePassiveWeapons()
+    {
+        if (MineInterval > 0f)
+        {
+            mineTimer -= Time.deltaTime;
+            if (mineTimer <= 0f)
+            {
+                mineTimer = MineInterval;
+                Vector2 dropDirection = lastMoveDirection.sqrMagnitude > 0.05f ? lastMoveDirection.normalized : aimDirection;
+                Vector2 dropPosition = (Vector2)transform.position - dropDirection * 0.72f;
+                world.SpawnPlayerMine(dropPosition, Mathf.Max(MineDamage, Damage * 1.1f), MineRadius, VolatileMines);
+            }
+        }
+
+        if (LightningInterval > 0f)
+        {
+            lightningTimer -= Time.deltaTime;
+            if (lightningTimer <= 0f)
+            {
+                lightningTimer = LightningInterval;
+                world.StrikeLightning(transform.position, Mathf.Max(LightningDamage, Damage * 1.1f), LightningRange, LightningJumps);
+            }
+        }
+
+        if (ShockwaveInterval > 0f)
+        {
+            shockwaveTimer -= Time.deltaTime;
+            if (shockwaveTimer <= 0f)
+            {
+                shockwaveTimer = ShockwaveInterval;
+                world.DamageEnemiesInRadius(transform.position, ShockwaveRadius, Damage * ShockwaveDamageMultiplier, true);
+            }
+        }
+
+        if (ElementalTempestEnabled)
+        {
+            if (elementalTempestActiveTimer <= 0f)
+            {
+                elementalTempestTimer -= Time.deltaTime;
+                if (elementalTempestTimer <= 0f)
+                {
+                    elementalTempestTimer = 12f;
+                    elementalTempestActiveTimer = 4f;
+                    elementalTempestTickTimer = 0f;
+                }
+            }
+            else
+            {
+                elementalTempestActiveTimer -= Time.deltaTime;
+                elementalTempestTickTimer -= Time.deltaTime;
+                if (elementalTempestTickTimer <= 0f)
+                {
+                    elementalTempestTickTimer = 0.5f;
+                    world.DamageEnemiesInRadius(transform.position, 4.2f, Damage * 0.45f, true);
+                }
+            }
         }
     }
 
@@ -1468,6 +2419,9 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
         if (dashTimer > 0f) dashTimer -= Time.deltaTime;
         if (dashCooldownTimer > 0f) dashCooldownTimer -= Time.deltaTime;
         if (attackAnimTimer > 0f) attackAnimTimer -= Time.deltaTime;
+        if (counterattackTimer > 0f) counterattackTimer -= Time.deltaTime;
+        if (guardianAngelCooldownTimer > 0f) guardianAngelCooldownTimer -= Time.deltaTime;
+        if (whirlwindTimer > 0f) whirlwindTimer -= Time.deltaTime;
     }
 
     private void UpdateAnimation()
@@ -1488,13 +2442,99 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
             animation = moving ? AdvancedHeroAnimation.Walk : AdvancedHeroAnimation.Idle;
         }
 
-        int frame = Mathf.FloorToInt(Time.time * (animation == AdvancedHeroAnimation.Walk ? 8f : 10f)) % 4;
+        int frame = Mathf.FloorToInt(Time.time * (animation == AdvancedHeroAnimation.Walk ? 8f : 10f));
         spriteRenderer.sprite = AdvancedGameArt.HeroSprite(playerClass, animation, frame);
 
         if (weaponRenderer != null)
         {
-            int weaponFrame = animation == AdvancedHeroAnimation.Idle ? 0 : frame;
+            int weaponFrame = animation == AdvancedHeroAnimation.Idle ? 0 : frame % 4;
             weaponRenderer.sprite = AdvancedGameArt.WeaponSprite(playerClass, weaponFrame);
+        }
+    }
+
+    public float RollAttackDamage(float baseDamage, out bool critical)
+    {
+        return RollAttackDamage(baseDamage, null, out critical);
+    }
+
+    public float RollAttackDamage(float baseDamage, AdvancedEnemyController enemy, out bool critical)
+    {
+        critical = UnityEngine.Random.value < CritChance;
+        float damage = baseDamage;
+        if (BerserkerMaxBonus > 0f)
+        {
+            float missingHealthBonus = Mathf.Clamp((1f - HealthPercent) * 0.5f, 0f, BerserkerMaxBonus);
+            damage *= 1f + missingHealthBonus;
+        }
+
+        if (enemy != null)
+        {
+            if (enemy.HealthPercent <= 0.25f)
+            {
+                damage *= 1f + ExecutionerBonus;
+            }
+
+            if (enemy.IsEliteOrBoss)
+            {
+                damage *= 1f + GiantSlayerBonus + (ApexPredator ? 0.35f : 0f);
+            }
+        }
+
+        float critMultiplier = CritDamageMultiplier;
+        if (critical && enemy != null && enemy.HasFreeze)
+        {
+            critMultiplier += BrittleCritDamageBonus;
+        }
+
+        return critical ? damage * critMultiplier : damage;
+    }
+
+    public void ApplyOnHitEffects(AdvancedEnemyController enemy, Vector3 hitPosition, float dealtDamage, bool allowExplosion = true)
+    {
+        if (enemy == null)
+        {
+            return;
+        }
+
+        if (BurnDamagePerSecond > 0f && BurnDuration > 0f)
+        {
+            enemy.ApplyStatus(AdvancedStatusEffect.Burn, Mathf.Max(1f, BurnDuration), Mathf.Max(1f, dealtDamage * BurnDamagePerSecond), 1f);
+        }
+
+        if (PoisonDamagePerSecond > 0f && PoisonDuration > 0f)
+        {
+            enemy.ApplyStatus(AdvancedStatusEffect.Poison, Mathf.Max(1f, PoisonDuration), Mathf.Max(0.001f, PoisonDamagePerSecond), 1f);
+        }
+
+        if (FreezeDuration > 0f)
+        {
+            enemy.ApplyStatus(AdvancedStatusEffect.Freeze, Mathf.Max(0.6f, FreezeDuration), 0f, Mathf.Clamp(FreezeSlowMultiplier, 0.25f, 0.98f));
+        }
+
+        if (HunterMarkBonus > 0f)
+        {
+            enemy.ApplyMark(5f, 1f + HunterMarkBonus);
+        }
+
+        if (VampiricPercent > 0f && dealtDamage > 0f)
+        {
+            Heal(dealtDamage * VampiricPercent);
+        }
+
+        if (SteamBurst && BurnDamagePerSecond > 0f && enemy.HasFreeze)
+        {
+            world.DamageEnemiesInRadius(hitPosition, 2f, dealtDamage * 1.4f, false);
+        }
+
+        if (WorldbreakerDamageMultiplier > 0f && allowExplosion)
+        {
+            world.DamageEnemiesInRadius(hitPosition, WorldbreakerRadius, dealtDamage * WorldbreakerDamageMultiplier, false);
+        }
+
+        if (allowExplosion && ExplosionChance > 0f && UnityEngine.Random.value < ExplosionChance)
+        {
+            float explosionDamage = Mathf.Max(6f, dealtDamage * ExplosionDamageMultiplier);
+            world.DamageEnemiesInRadius(hitPosition, ExplosionRadius, explosionDamage);
         }
     }
 
@@ -1505,7 +2545,37 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
             return;
         }
 
-        Health -= amount;
+        float percentReduction = Mathf.Clamp01(ArmorPercent + (ApexPredator ? EliteDamageReduction : 0f));
+        float mitigated = Mathf.Max(1f, amount * (1f - percentReduction) - FlatArmor);
+        mitigated *= Mathf.Max(0.1f, DamageTakenMultiplier);
+        if (Health - mitigated <= 0f)
+        {
+            if (PhoenixHeartAvailable)
+            {
+                PhoenixHeartAvailable = false;
+                Health = MaxHealth * 0.5f;
+                invulnerabilityTimer = 2f;
+                world.DamageEnemiesInRadius(transform.position, 5f, Damage * 5f, false);
+                world.CreateFloatingText("Phoenix!", transform.position + Vector3.up * 0.9f, new Color(1f, 0.52f, 0.2f));
+                return;
+            }
+
+            if (GuardianAngelAvailable && guardianAngelCooldownTimer <= 0f)
+            {
+                Health = Mathf.Max(1f, MaxHealth * 0.25f);
+                guardianAngelCooldownTimer = GuardianAngelCooldown;
+                invulnerabilityTimer = 2f;
+                world.CreateFloatingText("Guardian!", transform.position + Vector3.up * 0.9f, new Color(0.65f, 0.9f, 1f));
+                return;
+            }
+        }
+
+        Health -= mitigated;
+        if (CounterattackEnabled)
+        {
+            counterattackTimer = 2f;
+        }
+
         invulnerabilityTimer = 0.12f;
         world.SpawnBurst(transform.position, new Color(0.42f, 0.8f, 1f), 5);
         if (Health <= 0f)
@@ -1527,11 +2597,243 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
         Health = MaxHealth;
     }
 
+    public void IncreaseMaxHealthPercent(float percent)
+    {
+        IncreaseMaxHealth(MaxHealth * percent);
+    }
+
     public void GrowBullets()
     {
         bulletScale *= 1.2f;
         Damage *= 1.1f;
         transform.localScale = Vector3.one * Mathf.Min(1.35f, 1f + (bulletScale - 1f) * 0.15f);
+    }
+
+    public void EnableMines(bool major = false)
+    {
+        if (MineInterval <= 0f)
+        {
+            MineInterval = major ? 1.75f : 2.5f;
+            MineDamage = Damage * (major ? 1.55f : 1.1f);
+            MineRadius = major ? 1.8f : 1.5f;
+            mineTimer = 0.65f;
+            return;
+        }
+
+        MineInterval = Mathf.Max(0.95f, MineInterval * (major ? 0.65f : 0.82f));
+        MineDamage *= major ? 1.4f : 1.2f;
+        MineRadius = Mathf.Min(2.8f, MineRadius * (major ? 1.2f : 1.1f));
+    }
+
+    public void AddBurn(bool major = false)
+    {
+        if (BurnDamagePerSecond <= 0f)
+        {
+            BurnDamagePerSecond = 0.12f;
+            BurnDuration = 3f;
+            return;
+        }
+
+        AddBurnDamage(major);
+        AddBurnDuration(major);
+    }
+
+    public void AddPoison(bool major = false)
+    {
+        if (PoisonDamagePerSecond <= 0f)
+        {
+            PoisonDamagePerSecond = 0.01f;
+            PoisonDuration = 5f;
+            return;
+        }
+
+        AddPoisonDamage(major);
+        AddPoisonDuration(major);
+    }
+
+    public void AddFreeze(bool major = false)
+    {
+        if (FreezeDuration <= 0f)
+        {
+            FreezeDuration = 2.5f;
+            FreezeSlowMultiplier = 0.8f;
+            return;
+        }
+
+        AddFreezeDuration(major);
+        AddFreezeStrength(major);
+    }
+
+    public void AddBurnDamage(bool major = false)
+    {
+        BurnDamagePerSecond += major ? 0.06f : 0.04f;
+    }
+
+    public void AddBurnDuration(bool major = false)
+    {
+        BurnDuration += major ? 3f : 2f;
+    }
+
+    public void AddPoisonDamage(bool major = false)
+    {
+        PoisonDamagePerSecond += major ? 0.015f : 0.01f;
+    }
+
+    public void AddPoisonDuration(bool major = false)
+    {
+        PoisonDuration += major ? 3f : 2f;
+    }
+
+    public void AddFreezeDuration(bool major = false)
+    {
+        FreezeDuration += major ? 3f : 2f;
+    }
+
+    public void AddFreezeStrength(bool major = false)
+    {
+        FreezeSlowMultiplier = Mathf.Max(0.35f, FreezeSlowMultiplier - (major ? 0.1f : 0.075f));
+    }
+
+    public void ImproveLightning(bool major = false)
+    {
+        if (LightningInterval <= 0f)
+        {
+            LightningInterval = major ? 2.75f : 4f;
+            LightningDamage = Damage * (major ? 2.3f : 1.7f);
+            LightningRange = major ? 12f : 10f;
+            LightningJumps = major ? 5 : 2;
+            lightningTimer = 0.4f;
+            return;
+        }
+
+        LightningInterval = Mathf.Max(2.25f, LightningInterval * (major ? 0.7f : 0.9f));
+        LightningDamage *= major ? 1.5f : 1.2f;
+        LightningRange += major ? 2f : 1f;
+        LightningJumps = Mathf.Min(5, LightningJumps + (major ? 2 : 1));
+    }
+
+    public void AddExplosiveHits(bool major = false)
+    {
+        if (major)
+        {
+            ExplosionChance = Mathf.Min(0.8f, Mathf.Max(0.15f, ExplosionChance) * 1.5f);
+            ExplosionRadius = Mathf.Min(3.2f, Mathf.Max(1.8f, ExplosionRadius) * 1.5f);
+            ExplosionDamageMultiplier *= 1.5f;
+            return;
+        }
+
+        ExplosionChance = ExplosionChance <= 0f ? 0.15f : Mathf.Min(0.7f, ExplosionChance + 0.05f);
+        ExplosionRadius = Mathf.Min(2.9f, Mathf.Max(ExplosionRadius, 1.8f) + 0.2f);
+        ExplosionDamageMultiplier = Mathf.Max(0.8f, ExplosionDamageMultiplier + 0.08f);
+    }
+
+    public void ImproveFieldRations()
+    {
+        FieldRationsDropChance += FieldRationsDropChance <= 0f ? 0.04f : 0.02f;
+        FieldRationsHealPercent += FieldRationsHealPercent <= 0f ? 0.1f : 0.02f;
+    }
+
+    public void ImproveShockwave()
+    {
+        if (ShockwaveInterval <= 0f)
+        {
+            ShockwaveInterval = 10f;
+            ShockwaveDamageMultiplier = 0.3f;
+            ShockwaveRadius = 10f;
+            shockwaveTimer = 1f;
+            return;
+        }
+
+        ShockwaveInterval = Mathf.Max(5f, ShockwaveInterval - 1f);
+        ShockwaveDamageMultiplier += 0.1f;
+    }
+
+    public void ImproveBerserker()
+    {
+        BerserkerMaxBonus = BerserkerMaxBonus <= 0f ? 0.35f : 0.5f;
+    }
+
+    public void AddGlassCannon()
+    {
+        Damage *= 1.4f;
+        DamageTakenMultiplier *= 1.2f;
+    }
+
+    public void EnableGuardianAngel()
+    {
+        if (GuardianAngelAvailable)
+        {
+            GuardianAngelCooldown = 45f;
+            return;
+        }
+
+        GuardianAngelAvailable = true;
+        GuardianAngelCooldown = 60f;
+    }
+
+    public void AddToxicFlame()
+    {
+        ToxicFlame = true;
+        BurnDamagePerSecond *= 1.25f;
+        PoisonDamagePerSecond *= 1.35f;
+    }
+
+    public void AddSplitArrow()
+    {
+        SideArrowCount = Mathf.Min(6, SideArrowCount + (SideArrowCount <= 0 ? 2 : 1));
+        SideArrowDamageMultiplier = Mathf.Min(0.75f, SideArrowDamageMultiplier + 0.1f);
+    }
+
+    public void AddSpellEcho()
+    {
+        SpellEchoChance = SpellEchoChance <= 0f ? 0.2f : Mathf.Min(0.55f, SpellEchoChance + 0.1f);
+        SpellEchoDamageMultiplier = Mathf.Min(0.85f, SpellEchoDamageMultiplier + 0.08f);
+    }
+
+    public void EnableArcaneOverload()
+    {
+        ArcaneOverload = true;
+    }
+
+    public void AddCleave()
+    {
+        MeleeArcDegrees = Mathf.Min(180f, MeleeArcDegrees + 24f);
+        MeleeRange += 0.18f;
+    }
+
+    public void EnableCounterattack()
+    {
+        CounterattackEnabled = true;
+        Damage *= 1.05f;
+    }
+
+    public void EnableWhirlwind()
+    {
+        WhirlwindEnabled = true;
+        whirlwindTimer = 3f;
+    }
+
+    public void EnablePhoenixHeart()
+    {
+        PhoenixHeartAvailable = true;
+    }
+
+    public void EnableWorldbreaker()
+    {
+        WorldbreakerDamageMultiplier = 0.7f;
+        WorldbreakerRadius = 2.2f;
+    }
+
+    public void EnableApexPredator()
+    {
+        ApexPredator = true;
+        EliteDamageReduction = 0.15f;
+    }
+
+    public void EnableElementalTempest()
+    {
+        ElementalTempestEnabled = true;
+        elementalTempestTimer = 2f;
     }
 }
 
@@ -1550,10 +2852,28 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
     private float attackDelay;
     private float attackTimer;
     private float specialTimer;
+    private float burnTimer;
+    private float burnDamagePerSecond;
+    private float poisonTimer;
+    private float poisonDamagePerSecond;
+    private float freezeTimer;
+    private float freezeSlowMultiplier = 1f;
+    private float markTimer;
+    private float markDamageMultiplier = 1f;
+    private float statusTickTimer;
     private int xpReward;
     private bool isDead;
 
     public Color VisualColor { get; private set; }
+    public bool IsAlive { get { return isDead == false; } }
+    public float HealthPercent { get { return maxHealth <= 0f ? 0f : Mathf.Clamp01(health / maxHealth); } }
+    public bool IsBoss { get { return kind == AdvancedEnemyKind.Boss; } }
+    public bool IsEliteOrBoss { get { return kind == AdvancedEnemyKind.Tank || kind == AdvancedEnemyKind.Boss; } }
+    public bool HasBurn { get { return burnTimer > 0f; } }
+    public bool HasPoison { get { return poisonTimer > 0f; } }
+    public bool HasFreeze { get { return freezeTimer > 0f; } }
+    public float BurnDurationRemaining { get { return burnTimer; } }
+    public float BurnDamagePerSecond { get { return burnDamagePerSecond; } }
 
     public void Initialize(AdvancedGameWorld owner, AdvancedEnemyKind enemyKind, int wave)
     {
@@ -1561,11 +2881,12 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
         kind = enemyKind;
         ConfigureBaseStats();
 
-        maxHealth *= 1f + (wave - 1) * 0.14f;
+        float waveIndex = Mathf.Max(0, wave - 1);
+        maxHealth *= 1f + waveIndex * 0.16f + waveIndex * waveIndex * 0.004f;
         health = maxHealth;
-        damage *= 1f + (wave - 1) * 0.09f;
-        speed *= 1f + Mathf.Min(0.32f, (wave - 1) * 0.012f);
-        xpReward = Mathf.RoundToInt(xpReward * (1f + (wave - 1) * 0.045f));
+        damage *= 1f + waveIndex * 0.105f;
+        speed *= 1f + Mathf.Min(0.34f, waveIndex * 0.012f);
+        xpReward = Mathf.RoundToInt(xpReward * (1f + waveIndex * 0.045f));
         BuildVisuals();
     }
 
@@ -1591,15 +2912,6 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
     private void BuildVisuals()
     {
         VisualColor = EnemyColor();
-
-        GameObject silhouette = new GameObject("Enemy Silhouette");
-        silhouette.transform.SetParent(transform);
-        silhouette.transform.localPosition = new Vector3(0f, -0.02f, 0.01f);
-        silhouette.transform.localScale = kind == AdvancedEnemyKind.Boss ? Vector3.one * 0.9f : Vector3.one * 0.82f;
-        SpriteRenderer silhouetteRenderer = silhouette.AddComponent<SpriteRenderer>();
-        silhouetteRenderer.sprite = AdvancedGameArt.EnemyFallbackSprite(kind);
-        silhouetteRenderer.color = new Color(1f, 1f, 1f, 0.92f);
-        silhouetteRenderer.sortingOrder = kind == AdvancedEnemyKind.Boss ? 9 : 8;
 
         bodyRenderer = gameObject.AddComponent<SpriteRenderer>();
         bodyRenderer.sprite = AdvancedGameArt.EnemySprite(kind);
@@ -1656,6 +2968,12 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
 
         attackTimer -= Time.deltaTime;
         specialTimer -= Time.deltaTime;
+        UpdateStatuses();
+        if (isDead)
+        {
+            return;
+        }
+
         if (kind == AdvancedEnemyKind.Ranged) UpdateRanged();
         else if (kind == AdvancedEnemyKind.Boss) UpdateBoss();
         else UpdateMelee();
@@ -1730,11 +3048,14 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
         if (direction.sqrMagnitude > 0.01f)
         {
             Vector2 currentPosition = transform.position;
-            Vector2 nextPosition = world.ResolveMovement(currentPosition, direction.normalized * speed * Time.deltaTime, kind == AdvancedEnemyKind.Boss ? 1.25f : 0.5f);
+            float radius = kind == AdvancedEnemyKind.Boss ? 1.25f : 0.5f;
+            Vector2 steeringDirection = world.FindOpenDirection(currentPosition, direction.normalized, radius);
+            float speedMultiplier = freezeTimer > 0f ? freezeSlowMultiplier : 1f;
+            Vector2 nextPosition = world.ResolveMovement(currentPosition, steeringDirection * speed * speedMultiplier * Time.deltaTime, radius);
             transform.position = nextPosition;
-            if (bodyRenderer != null && Mathf.Abs(direction.x) > 0.05f)
+            if (bodyRenderer != null && Mathf.Abs(steeringDirection.x) > 0.05f)
             {
-                bodyRenderer.flipX = direction.x < 0f;
+                bodyRenderer.flipX = steeringDirection.x < 0f;
             }
         }
     }
@@ -1748,13 +3069,82 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
         Destroy(gameObject);
     }
 
+    public void ApplyStatus(AdvancedStatusEffect effect, float duration, float damagePerSecond, float slowMultiplier)
+    {
+        if (isDead)
+        {
+            return;
+        }
+
+        switch (effect)
+        {
+            case AdvancedStatusEffect.Burn:
+                burnTimer = Mathf.Max(burnTimer, duration);
+                burnDamagePerSecond = Mathf.Max(burnDamagePerSecond, damagePerSecond);
+                break;
+            case AdvancedStatusEffect.Poison:
+                poisonTimer = Mathf.Max(poisonTimer, duration);
+                poisonDamagePerSecond = Mathf.Max(poisonDamagePerSecond, damagePerSecond);
+                break;
+            case AdvancedStatusEffect.Freeze:
+                freezeTimer = Mathf.Max(freezeTimer, duration);
+                float adjustedSlow = kind == AdvancedEnemyKind.Boss ? 1f - ((1f - slowMultiplier) * 0.25f) : slowMultiplier;
+                freezeSlowMultiplier = Mathf.Min(freezeSlowMultiplier, adjustedSlow);
+                break;
+        }
+
+        if (bodyRenderer != null)
+        {
+            bodyRenderer.color = StatusColor();
+        }
+    }
+
+    private void UpdateStatuses()
+    {
+        if (burnTimer > 0f) burnTimer -= Time.deltaTime;
+        if (poisonTimer > 0f) poisonTimer -= Time.deltaTime;
+        if (freezeTimer > 0f) freezeTimer -= Time.deltaTime;
+        if (markTimer > 0f) markTimer -= Time.deltaTime;
+        if (freezeTimer <= 0f) freezeSlowMultiplier = 1f;
+        if (markTimer <= 0f) markDamageMultiplier = 1f;
+
+        float damagePerSecond = 0f;
+        if (burnTimer > 0f) damagePerSecond += burnDamagePerSecond;
+        if (poisonTimer > 0f) damagePerSecond += maxHealth * poisonDamagePerSecond * (kind == AdvancedEnemyKind.Boss ? 0.5f : 1f);
+        if (damagePerSecond > 0f)
+        {
+            statusTickTimer -= Time.deltaTime;
+            if (statusTickTimer <= 0f)
+            {
+                statusTickTimer = 0.5f;
+                TakeDamage(damagePerSecond * 0.5f);
+            }
+        }
+
+        if (bodyRenderer != null && IsInvoking(nameof(RestoreColor)) == false)
+        {
+            bodyRenderer.color = StatusColor();
+        }
+    }
+
     public void TakeDamage(float amount)
+    {
+        TakeDamage(amount, false);
+    }
+
+    public void TakeDamage(float amount, bool critical)
     {
         if (isDead) return;
 
+        if (markTimer > 0f)
+        {
+            amount *= markDamageMultiplier;
+        }
+
         health -= amount;
         UpdateHealthBar();
-        world.CreateFloatingText(Mathf.CeilToInt(amount).ToString(), transform.position + Vector3.up * 0.55f, VisualColor);
+        string text = critical ? "CRIT " + Mathf.CeilToInt(amount) : Mathf.CeilToInt(amount).ToString();
+        world.CreateFloatingText(text, transform.position + Vector3.up * 0.55f, critical ? new Color(1f, 0.86f, 0.22f) : VisualColor);
         if (bodyRenderer != null)
         {
             bodyRenderer.color = Color.white;
@@ -1774,8 +3164,22 @@ internal sealed class AdvancedEnemyController : MonoBehaviour
     {
         if (bodyRenderer != null)
         {
-            bodyRenderer.color = Color.white;
+            bodyRenderer.color = StatusColor();
         }
+    }
+
+    private Color StatusColor()
+    {
+        if (freezeTimer > 0f) return new Color(0.58f, 0.9f, 1f);
+        if (poisonTimer > 0f) return new Color(0.48f, 1f, 0.32f);
+        if (burnTimer > 0f) return new Color(1f, 0.55f, 0.22f);
+        return Color.white;
+    }
+
+    public void ApplyMark(float duration, float damageMultiplier)
+    {
+        markTimer = Mathf.Max(markTimer, duration);
+        markDamageMultiplier = Mathf.Max(markDamageMultiplier, damageMultiplier);
     }
 
     private void UpdateHealthBar()
@@ -1918,7 +3322,14 @@ internal sealed class AdvancedBullet : MonoBehaviour
                 return;
             }
 
-            enemy.TakeDamage(damage);
+            AdvancedPlayerController player = AdvancedGameWorld.Instance != null ? AdvancedGameWorld.Instance.Player : null;
+            bool critical = false;
+            float finalDamage = player != null ? player.RollAttackDamage(damage, enemy, out critical) : damage;
+            enemy.TakeDamage(finalDamage, critical);
+            if (player != null)
+            {
+                player.ApplyOnHitEffects(enemy, transform.position, finalDamage);
+            }
             if (pierceRemaining <= 0) Destroy(gameObject);
             else pierceRemaining--;
             return;
@@ -1934,10 +3345,100 @@ internal sealed class AdvancedBullet : MonoBehaviour
     {
         if (fromPlayer && projectileKind == AdvancedProjectileKind.Magic && explosionRadius > 0f && AdvancedGameWorld.Instance != null)
         {
-            AdvancedGameWorld.Instance.DamageEnemiesInRadius(transform.position, explosionRadius, damage);
+            AdvancedGameWorld.Instance.DamageEnemiesInRadius(transform.position, explosionRadius, damage, true);
         }
 
         Destroy(gameObject);
+    }
+}
+
+internal sealed class AdvancedMine : MonoBehaviour
+{
+    private AdvancedGameWorld world;
+    private SpriteRenderer spriteRenderer;
+    private float damage;
+    private float radius;
+    private float armTimer = 0.35f;
+    private float lifetime = 18f;
+    private bool usePlayerAttackEffects;
+    private bool exploded;
+
+    public void Initialize(AdvancedGameWorld owner, float mineDamage, float explosionRadius, bool inheritsPlayerAttackEffects)
+    {
+        world = owner;
+        damage = mineDamage;
+        radius = explosionRadius;
+        usePlayerAttackEffects = inheritsPlayerAttackEffects;
+        spriteRenderer = GetComponent<SpriteRenderer>();
+    }
+
+    private void Update()
+    {
+        armTimer -= Time.deltaTime;
+        lifetime -= Time.deltaTime;
+        float pulse = 1f + Mathf.Sin(Time.time * 8f) * 0.08f;
+        transform.localScale = Vector3.one * 0.62f * pulse;
+        if (spriteRenderer != null)
+        {
+            spriteRenderer.color = armTimer > 0f ? new Color(1f, 1f, 1f, 0.55f) : Color.white;
+        }
+
+        if (lifetime <= 0f)
+        {
+            Destroy(gameObject);
+        }
+    }
+
+    private void OnTriggerEnter2D(Collider2D other)
+    {
+        if (armTimer > 0f || exploded)
+        {
+            return;
+        }
+
+        if (other.GetComponent<AdvancedEnemyController>() == null)
+        {
+            return;
+        }
+
+        exploded = true;
+        if (world != null)
+        {
+            world.DamageEnemiesInRadius(transform.position, radius, damage, usePlayerAttackEffects);
+        }
+
+        Destroy(gameObject);
+    }
+}
+
+internal sealed class AdvancedLightningArc : MonoBehaviour
+{
+    private LineRenderer line;
+    private Color color;
+    private float life = 0.16f;
+
+    public void Initialize(LineRenderer lineRenderer, Color arcColor)
+    {
+        line = lineRenderer;
+        color = arcColor;
+    }
+
+    private void Update()
+    {
+        life -= Time.deltaTime;
+        if (line != null)
+        {
+            Color faded = color;
+            faded.a = Mathf.Clamp01(life / 0.16f);
+            line.startColor = faded;
+            line.endColor = new Color(1f, 1f, 1f, faded.a);
+            line.startWidth = Mathf.Max(0f, line.startWidth - Time.deltaTime * 0.22f);
+        }
+
+        if (life <= 0f)
+        {
+            Destroy(gameObject);
+        }
     }
 }
 
@@ -2030,12 +3531,47 @@ internal sealed class AdvancedUpgradeOption
 {
     public readonly string Title;
     public readonly string Description;
+    public readonly AdvancedUpgradeRarity Rarity;
     public readonly Action<AdvancedPlayerController> Apply;
 
-    public AdvancedUpgradeOption(string title, string description, Action<AdvancedPlayerController> apply)
+    public float Weight
+    {
+        get
+        {
+            switch (Rarity)
+            {
+                case AdvancedUpgradeRarity.Uncommon: return 28f;
+                case AdvancedUpgradeRarity.Epic: return 13f;
+                case AdvancedUpgradeRarity.Legendary: return 4f;
+                default: return 55f;
+            }
+        }
+    }
+
+    public string RarityName
+    {
+        get { return Rarity.ToString().ToUpperInvariant(); }
+    }
+
+    public Color RarityColor
+    {
+        get
+        {
+            switch (Rarity)
+            {
+                case AdvancedUpgradeRarity.Uncommon: return new Color(0.42f, 0.86f, 0.48f);
+                case AdvancedUpgradeRarity.Epic: return new Color(0.72f, 0.42f, 1f);
+                case AdvancedUpgradeRarity.Legendary: return new Color(1f, 0.72f, 0.22f);
+                default: return new Color(0.82f, 0.88f, 0.95f);
+            }
+        }
+    }
+
+    public AdvancedUpgradeOption(string title, string description, AdvancedUpgradeRarity rarity, Action<AdvancedPlayerController> apply)
     {
         Title = title;
         Description = description;
+        Rarity = rarity;
         Apply = apply;
     }
 }
@@ -2072,6 +3608,7 @@ internal enum AdvancedGameState
     Paused,
     LevelUp,
     PermanentUpgrades,
+    Stats,
     GameOver
 }
 
@@ -2088,6 +3625,21 @@ internal enum AdvancedHeroAnimation
     Walk,
     Attack,
     Draw
+}
+
+internal enum AdvancedUpgradeRarity
+{
+    Common,
+    Uncommon,
+    Epic,
+    Legendary
+}
+
+internal enum AdvancedStatusEffect
+{
+    Burn,
+    Poison,
+    Freeze
 }
 
 internal enum AdvancedProjectileKind
@@ -2127,6 +3679,11 @@ internal static class AdvancedGameArt
 
     private static Sprite PixelCrawlerFrame(string key, string relativePath, int frameWidth, int frameHeight, int frame, float pixelsPerUnit)
     {
+        return PixelCrawlerFrame(key, relativePath, frameWidth, frameHeight, frame, pixelsPerUnit, new Vector2(0.5f, 0.42f));
+    }
+
+    private static Sprite PixelCrawlerFrame(string key, string relativePath, int frameWidth, int frameHeight, int frame, float pixelsPerUnit, Vector2 pivot)
+    {
         Texture2D texture = LoadPixelCrawlerTexture(relativePath);
         if (texture == null)
         {
@@ -2135,12 +3692,12 @@ internal static class AdvancedGameArt
 
         int frameCount = Mathf.Max(1, texture.width / frameWidth);
         int safeFrame = Mathf.Abs(frame) % frameCount;
-        string cacheKey = "pc-frame-" + key + "-" + safeFrame;
+        string cacheKey = "pc-frame-" + key + "-" + safeFrame + "-" + Mathf.RoundToInt(pivot.x * 100f) + "-" + Mathf.RoundToInt(pivot.y * 100f);
         Sprite sprite;
         if (SpriteCache.TryGetValue(cacheKey, out sprite)) return sprite;
 
         Rect rect = new Rect(safeFrame * frameWidth, texture.height - frameHeight, frameWidth, frameHeight);
-        sprite = Sprite.Create(texture, rect, new Vector2(0.5f, 0.42f), pixelsPerUnit);
+        sprite = Sprite.Create(texture, rect, pivot, pixelsPerUnit);
         SpriteCache[cacheKey] = sprite;
         return sprite;
     }
@@ -2264,7 +3821,12 @@ internal static class AdvancedGameArt
         }
 
         string motion = animation == AdvancedHeroAnimation.Walk ? "Run" : "Idle";
-        return PixelCrawlerFrame("hero-" + character + "-" + motion, "Entities/Npc's/" + character + "/" + motion + "/" + motion + "-Sheet.png", 32, 32, frame, 32f);
+        if (motion == "Idle")
+        {
+            return PixelCrawlerFrame("hero-" + character + "-Idle", "Entities/Npc's/" + character + "/Idle/Idle-Sheet.png", 32, 32, frame, 32f);
+        }
+
+        return PixelCrawlerFrame("hero-" + character + "-Run", "Entities/Npc's/" + character + "/Run/Run-Sheet.png", 64, 64, frame, 32f, new Vector2(0.5f, 0.3f));
     }
 
     private static Sprite PixelEnemySprite(AdvancedEnemyKind kind, int frame)
@@ -2272,17 +3834,17 @@ internal static class AdvancedGameArt
         switch (kind)
         {
             case AdvancedEnemyKind.Ranged:
-                return PixelCrawlerFrame("enemy-skeleton-mage-run", "Entities/Mobs/Skeleton Crew/Skeleton - Mage/Run/Run-Sheet.png", 32, 32, frame, 32f);
+                return PixelCrawlerFrame("enemy-skeleton-mage-run", "Entities/Mobs/Skeleton Crew/Skeleton - Mage/Run/Run-Sheet.png", 64, 64, frame, 32f, new Vector2(0.5f, 0.3f));
             case AdvancedEnemyKind.Tank:
-                return PixelCrawlerFrame("enemy-orc-warrior-run", "Entities/Mobs/Orc Crew/Orc - Warrior/Run/Run-Sheet.png", 32, 32, frame, 32f);
+                return PixelCrawlerFrame("enemy-orc-warrior-run", "Entities/Mobs/Orc Crew/Orc - Warrior/Run/Run-Sheet.png", 64, 64, frame, 32f, new Vector2(0.5f, 0.3f));
             case AdvancedEnemyKind.GlassCannon:
-                return PixelCrawlerFrame("enemy-skeleton-rogue-run", "Entities/Mobs/Skeleton Crew/Skeleton - Rogue/Run/Run-Sheet.png", 32, 32, frame, 32f);
+                return PixelCrawlerFrame("enemy-skeleton-rogue-run", "Entities/Mobs/Skeleton Crew/Skeleton - Rogue/Run/Run-Sheet.png", 64, 64, frame, 32f, new Vector2(0.5f, 0.3f));
             case AdvancedEnemyKind.Exploder:
-                return PixelCrawlerFrame("enemy-orc-rogue-run", "Entities/Mobs/Orc Crew/Orc - Rogue/Run/Run-Sheet.png", 32, 32, frame, 32f);
+                return PixelCrawlerFrame("enemy-orc-rogue-run", "Entities/Mobs/Orc Crew/Orc - Rogue/Run/Run-Sheet.png", 64, 64, frame, 32f, new Vector2(0.5f, 0.3f));
             case AdvancedEnemyKind.Boss:
-                return PixelCrawlerFrame("enemy-orc-boss-run", "Entities/Mobs/Orc Crew/Orc/Run/Run-Sheet.png", 32, 32, frame, 32f);
+                return PixelCrawlerFrame("enemy-orc-boss-run", "Entities/Mobs/Orc Crew/Orc/Run/Run-Sheet.png", 64, 64, frame, 32f, new Vector2(0.5f, 0.3f));
             default:
-                return PixelCrawlerFrame("enemy-skeleton-warrior-run", "Entities/Mobs/Skeleton Crew/Skeleton - Warrior/Run/Run-Sheet.png", 32, 32, frame, 32f);
+                return PixelCrawlerFrame("enemy-skeleton-warrior-run", "Entities/Mobs/Skeleton Crew/Skeleton - Warrior/Run/Run-Sheet.png", 64, 64, frame, 32f, new Vector2(0.5f, 0.3f));
         }
     }
 
@@ -2435,7 +3997,7 @@ internal static class AdvancedGameArt
         switch (kind)
         {
             case AdvancedProjectileKind.Arrow:
-                return TwoToneSprite("projectile-arrow", new Color(0.9f, 0.78f, 0.43f), new Color(0.28f, 0.18f, 0.08f), (x, y) => Mathf.Abs(y) < 0.08f && x > -0.8f && x < 0.72f, (x, y) => x > 0.48f && Mathf.Abs(y) < 0.18f);
+                return TwoToneSprite("projectile-arrow-v2", new Color(1f, 0.86f, 0.34f), new Color(0.25f, 0.14f, 0.04f), (x, y) => Mathf.Abs(y) < 0.12f && x > -0.82f && x < 0.76f, (x, y) => x > 0.46f && Mathf.Abs(y) < 0.24f);
             case AdvancedProjectileKind.Magic:
                 return StarSprite("projectile-magic", new Color(0.82f, 0.4f, 1f), 9);
             default:
@@ -2574,18 +4136,31 @@ internal static class AdvancedGameArt
 
     public static Sprite WallSprite()
     {
-        return TwoToneSprite("wall-v1", new Color(0.35f, 0.37f, 0.39f), new Color(0.16f, 0.17f, 0.19f), (x, y) => Mathf.Abs(x) < 0.9f && Mathf.Abs(y) < 0.42f, (x, y) => Mathf.Abs(y) > 0.24f || Mathf.Abs(x) > 0.72f);
+        return WallSprite(0);
+    }
+
+    public static Sprite WallSprite(int variant)
+    {
+        int choice = Mathf.Abs(variant) % 3;
+        Color main = choice == 0 ? new Color(0.42f, 0.28f, 0.16f) : choice == 1 ? new Color(0.48f, 0.48f, 0.42f) : new Color(0.36f, 0.25f, 0.17f);
+        Color accent = choice == 1 ? new Color(0.22f, 0.22f, 0.2f) : new Color(0.18f, 0.11f, 0.07f);
+        return TwoToneSprite("wall-clear-" + choice, main, accent,
+            (x, y) => Mathf.Abs(x) < 0.92f && Mathf.Abs(y) < 0.38f,
+            (x, y) => Mathf.Abs(x) > 0.76f || Mathf.Abs(y) > 0.24f || Mathf.Abs(y + 0.02f) < 0.035f);
     }
 
     public static Sprite BuildingSprite(int variant)
     {
-        string key = "building-v2-" + variant;
+        string key = "building-clear-v3-" + Mathf.Abs(variant) % 6;
         Sprite sprite;
         if (SpriteCache.TryGetValue(key, out sprite)) return sprite;
 
-        Color roof = variant % 2 == 0 ? new Color(0.22f, 0.26f, 0.31f) : new Color(0.26f, 0.23f, 0.2f);
-        Color trim = new Color(0.1f, 0.115f, 0.135f);
-        Color window = new Color(0.78f, 0.7f, 0.48f, 0.85f);
+        int style = Mathf.Abs(variant) % 6;
+        Color wall = style % 2 == 0 ? new Color(0.56f, 0.34f, 0.18f) : new Color(0.42f, 0.38f, 0.31f);
+        Color roof = style < 3 ? new Color(0.27f, 0.18f, 0.13f) : new Color(0.22f, 0.32f, 0.28f);
+        Color trim = new Color(0.09f, 0.065f, 0.045f);
+        Color window = new Color(0.72f, 0.9f, 1f, 0.9f);
+        Color door = new Color(0.18f, 0.11f, 0.06f);
 
         Texture2D texture = TransparentTexture(64);
         for (int y = 0; y < 64; y++)
@@ -2596,23 +4171,51 @@ internal static class AdvancedGameArt
                 float ny = (y + 0.5f) / 64f * 2f - 1f;
                 Color pixel = new Color(0f, 0f, 0f, 0f);
 
-                bool body = Mathf.Abs(nx) < 0.88f && Mathf.Abs(ny) < 0.78f;
-                bool trimMask = Mathf.Abs(nx) > 0.72f || Mathf.Abs(ny) > 0.62f;
-                bool roofStripe = Mathf.Abs(ny + 0.02f) < 0.035f || Mathf.Abs(nx + 0.02f) < 0.035f;
-                bool windows = Mathf.Abs(nx) < 0.62f && Mathf.Abs(ny) < 0.48f
-                    && Mathf.Repeat((nx + 1f) * 4.2f, 1f) < 0.28f
-                    && Mathf.Repeat((ny + 1f) * 3.4f, 1f) < 0.24f;
+                bool body = Mathf.Abs(nx) < 0.78f && ny > -0.72f && ny < 0.42f;
+                bool roofMask = Mathf.Abs(nx) < 0.9f - Mathf.Max(0f, ny - 0.25f) * 0.45f && ny > 0.12f && ny < 0.82f;
+                bool outline = (body || roofMask) && (Mathf.Abs(nx) > 0.72f || ny < -0.66f || ny > 0.74f);
+                bool roofStripe = roofMask && (Mathf.Abs(nx) < 0.035f || Mathf.Abs(ny - 0.47f) < 0.035f);
+                bool plank = body && Mathf.Repeat((nx + 1f) * 5f + style * 0.3f, 1f) < 0.08f;
+                bool windows = body && ny > -0.18f && ny < 0.16f && (Mathf.Abs(nx + 0.42f) < 0.13f || Mathf.Abs(nx - 0.42f) < 0.13f);
+                bool doorMask = body && ny < -0.32f && Mathf.Abs(nx) < 0.18f;
 
-                if (body) pixel = roof;
-                if (body && roofStripe) pixel = new Color(roof.r * 0.72f, roof.g * 0.72f, roof.b * 0.72f, 1f);
-                if (body && trimMask) pixel = trim;
-                if (body && windows) pixel = window;
+                if (body) pixel = wall;
+                if (roofMask) pixel = roof;
+                if (roofStripe || plank) pixel = new Color(trim.r * 1.25f, trim.g * 1.25f, trim.b * 1.25f, 1f);
+                if (windows) pixel = window;
+                if (doorMask) pixel = door;
+                if (outline) pixel = trim;
                 texture.SetPixel(x, y, pixel);
             }
         }
 
         texture.Apply();
         sprite = Sprite.Create(texture, new Rect(0f, 0f, 64f, 64f), new Vector2(0.5f, 0.5f), 64f);
+        SpriteCache[key] = sprite;
+        return sprite;
+    }
+
+    public static Sprite FootprintSprite()
+    {
+        string key = "hitbox-footprint-v1";
+        Sprite sprite;
+        if (SpriteCache.TryGetValue(key, out sprite)) return sprite;
+
+        Texture2D texture = TransparentTexture(32);
+        Color fill = new Color(0f, 0f, 0f, 0.1f);
+        Color border = new Color(0.95f, 0.85f, 0.42f, 0.72f);
+        for (int y = 0; y < 32; y++)
+        {
+            for (int x = 0; x < 32; x++)
+            {
+                bool edge = x < 2 || y < 2 || x > 29 || y > 29;
+                bool inner = x >= 2 && y >= 2 && x <= 29 && y <= 29;
+                texture.SetPixel(x, y, edge ? border : inner ? fill : Color.clear);
+            }
+        }
+
+        texture.Apply();
+        sprite = Sprite.Create(texture, new Rect(0f, 0f, 32f, 32f), new Vector2(0.5f, 0.5f), 32f);
         SpriteCache[key] = sprite;
         return sprite;
     }
@@ -2625,6 +4228,15 @@ internal static class AdvancedGameArt
             bool horizontal = Mathf.Abs(y) < 0.22f && Mathf.Abs(x) < 0.7f;
             return vertical || horizontal ? 1f : 0f;
         });
+    }
+
+    public static Sprite MineSprite()
+    {
+        return TwoToneSprite("mine", new Color(0.12f, 0.13f, 0.15f), new Color(1f, 0.45f, 0.16f), (x, y) =>
+        {
+            float radius = Mathf.Sqrt(x * x + y * y);
+            return radius < 0.68f || (Mathf.Abs(x) < 0.12f && Mathf.Abs(y) < 0.9f) || (Mathf.Abs(y) < 0.12f && Mathf.Abs(x) < 0.9f);
+        }, (x, y) => Mathf.Sqrt(x * x + y * y) < 0.28f);
     }
 
     public static Texture2D Pixel(Color color)
