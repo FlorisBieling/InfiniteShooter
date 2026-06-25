@@ -1063,7 +1063,12 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         {
             bossKills++;
             AwardMetaPoints(6 + wave / 5, "Boss defeated");
-            SpawnHealthPickup(position, 35f);
+            int dropCount = player != null ? Mathf.Max(1, player.BossHealthDropCount) : 1;
+            float bossHealAmount = player != null && player.FieldRationsHealPercent > 0f ? Mathf.Max(35f, player.MaxHealth * player.FieldRationsHealPercent) : 35f;
+            for (int i = 0; i < dropCount; i++)
+            {
+                SpawnHealthPickup(position, bossHealAmount);
+            }
             cameraFollow.Shake(0.45f);
         }
         else if (UnityEngine.Random.value < pointChance)
@@ -1072,7 +1077,12 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         }
 
         float healthDropChance = 0.055f + (player != null ? player.FieldRationsDropChance : 0f);
-        if (UnityEngine.Random.value < healthDropChance)
+        if (enemy != null && enemy.IsEliteOrBoss && player != null)
+        {
+            healthDropChance = Mathf.Max(healthDropChance, player.FieldRationsEliteDropChance);
+        }
+
+        if (isBoss == false && UnityEngine.Random.value < healthDropChance)
         {
             float healAmount = player != null && player.FieldRationsHealPercent > 0f ? Mathf.Max(18f, player.MaxHealth * player.FieldRationsHealPercent) : 18f;
             SpawnHealthPickup(position, healAmount);
@@ -1191,7 +1201,7 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
         xp -= xpToNextLevel;
         level++;
-        xpToNextLevel = Mathf.RoundToInt(xpToNextLevel * 1.25f + 18f);
+        xpToNextLevel = Mathf.RoundToInt(xpToNextLevel * 1.16f + 12f);
         state = AdvancedGameState.LevelUp;
         Time.timeScale = 0f;
         CreateLevelChoices();
@@ -1201,11 +1211,17 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
     {
         levelChoices.Clear();
         List<AdvancedUpgradeOption> pool = CreateUpgradePool();
-        for (int i = 0; i < 3 && pool.Count > 0; i++)
+        int optionCount = player != null ? Mathf.Clamp(player.LevelUpChoiceCount, 3, 7) : 3;
+        for (int i = 0; i < optionCount && pool.Count > 0; i++)
         {
             int index = ChooseWeightedUpgradeIndex(pool);
-            levelChoices.Add(pool[index]);
+            AdvancedUpgradeOption selected = pool[index];
+            levelChoices.Add(selected);
             pool.RemoveAt(index);
+            if (string.IsNullOrEmpty(selected.Family) == false)
+            {
+                pool.RemoveAll(option => option.Family == selected.Family);
+            }
         }
     }
 
@@ -1214,13 +1230,13 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         float totalWeight = 0f;
         for (int i = 0; i < pool.Count; i++)
         {
-            totalWeight += pool[i].Weight;
+            totalWeight += UpgradeWeight(pool[i]);
         }
 
         float roll = UnityEngine.Random.value * totalWeight;
         for (int i = 0; i < pool.Count; i++)
         {
-            roll -= pool[i].Weight;
+            roll -= UpgradeWeight(pool[i]);
             if (roll <= 0f)
             {
                 return i;
@@ -1228,6 +1244,17 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         }
 
         return pool.Count - 1;
+    }
+
+    private float UpgradeWeight(AdvancedUpgradeOption option)
+    {
+        float weight = option.Weight;
+        if (option.Rarity != AdvancedUpgradeRarity.Common && player != null)
+        {
+            weight *= 1f + Mathf.Clamp(player.Luck, 0f, 3f);
+        }
+
+        return weight;
     }
 
     private void AddUpgradeOption(List<AdvancedUpgradeOption> pool, AdvancedUpgradeOption option, int maxStacks = 0, bool allowed = true)
@@ -1261,17 +1288,33 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         List<AdvancedUpgradeOption> pool = new List<AdvancedUpgradeOption>();
         AdvancedPlayerClass heroClass = selectedClass;
 
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Honed Weapon", "+18% direct attack damage.", AdvancedUpgradeRarity.Common, p => p.Damage *= 1.18f));
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Faster Fire", "Attack interval -15%. Min 0.15s.", AdvancedUpgradeRarity.Common, p => p.FireDelay = Mathf.Max(0.15f, p.FireDelay * 0.85f)));
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Move Speed", "+10% movement speed.", AdvancedUpgradeRarity.Common, p => p.MoveSpeed *= 1.1f));
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Max Health", "+10% max HP and full heal.", AdvancedUpgradeRarity.Common, p => p.IncreaseMaxHealthPercent(0.1f)));
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Fast Rounds", "+20% projectile speed.", AdvancedUpgradeRarity.Common, p => p.BulletSpeed *= 1.2f), 0, heroClass != AdvancedPlayerClass.Knight);
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Piercing", "Arrows hit 1 extra enemy.", AdvancedUpgradeRarity.Common, p => p.PierceCount++), 0, heroClass == AdvancedPlayerClass.Archer);
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Regen", "Heal 0.5% max HP per second.", AdvancedUpgradeRarity.Common, p => p.HealthRegen += p.MaxHealth * 0.005f));
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Magnet", "XP pickup radius x1.35.", AdvancedUpgradeRarity.Common, p => p.MagnetRange *= 1.35f), 5);
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Plated Vest", "+2 flat armor.", AdvancedUpgradeRarity.Common, p => p.FlatArmor += 2f));
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Student of Battle", "+12% XP gained.", AdvancedUpgradeRarity.Common, p => p.ExperienceMultiplier += 0.12f));
-        AddUpgradeOption(pool, new AdvancedUpgradeOption("Field Rations", "Enemies can drop stronger heals.", AdvancedUpgradeRarity.Common, p => p.ImproveFieldRations()));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Honed Weapon", "+18% direct attack damage.", AdvancedUpgradeRarity.Common, p => p.Damage *= 1.18f, "damage"));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Faster Fire", "Attack interval -15%. Min 0.15s.", AdvancedUpgradeRarity.Common, p => p.FireDelay = Mathf.Max(0.15f, p.FireDelay * 0.85f), "fire_rate"));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Move Speed", "+10% movement speed.", AdvancedUpgradeRarity.Common, p => p.MoveSpeed *= 1.1f, "move"));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Max Health", "+10% max HP and full heal.", AdvancedUpgradeRarity.Common, p => p.IncreaseMaxHealthPercent(0.1f), "health"));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Fast Rounds", "+20% projectile speed.", AdvancedUpgradeRarity.Common, p => p.BulletSpeed *= 1.2f, "projectile_speed"), 0, heroClass != AdvancedPlayerClass.Knight);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Piercing", "Arrows hit 1 extra enemy.", AdvancedUpgradeRarity.Common, p => p.PierceCount++, "pierce"), 0, heroClass == AdvancedPlayerClass.Archer);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Regen", "Heal 0.5% max HP per second.", AdvancedUpgradeRarity.Common, p => p.HealthRegen += p.MaxHealth * 0.005f, "regen"));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Magnet", "XP pickup radius x1.35.", AdvancedUpgradeRarity.Common, p => p.MagnetRange *= 1.35f, "magnet"), 5);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Plated Vest", "+2 flat armor.", AdvancedUpgradeRarity.Common, p => p.FlatArmor += 2f, "armor"));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Student of Battle", "+12% XP gained.", AdvancedUpgradeRarity.Common, p => p.ExperienceMultiplier += 0.12f, "xp_gain"));
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Lucky Find", "+15% Luck for rarity rolls.", AdvancedUpgradeRarity.Common, p => p.AddLuck(0.15f), "luck"), 5);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Expanded Selection I", "Future level-ups show 4 options.", AdvancedUpgradeRarity.Common, p => p.LevelUpChoiceCount = Mathf.Max(p.LevelUpChoiceCount, 4), "choices"), 1, player == null || player.LevelUpChoiceCount < 4);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Field Rations", "Enemies can drop stronger heals.", AdvancedUpgradeRarity.Common, p => p.ImproveFieldRations(), "supplies"));
+
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Tempered Weapon", "+35% direct attack damage.", AdvancedUpgradeRarity.Uncommon, p => p.Damage *= 1.35f, "damage"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Quickened Strikes", "Attack interval -25%.", AdvancedUpgradeRarity.Uncommon, p => p.FireDelay = Mathf.Max(0.15f, p.FireDelay * 0.75f), "fire_rate"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Fleet Footwork", "+20% movement speed.", AdvancedUpgradeRarity.Uncommon, p => p.MoveSpeed *= 1.2f, "move"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Greater Vitality", "+25% max HP and full heal.", AdvancedUpgradeRarity.Uncommon, p => p.IncreaseMaxHealthPercent(0.25f), "health"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Accelerated Rounds", "+45% projectile speed.", AdvancedUpgradeRarity.Uncommon, p => p.BulletSpeed *= 1.45f, "projectile_speed"), 1, heroClass != AdvancedPlayerClass.Knight);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Deep Piercing", "Arrows pierce 2 extra enemies.", AdvancedUpgradeRarity.Uncommon, p => p.PierceCount += 2, "pierce"), 1, heroClass == AdvancedPlayerClass.Archer);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Rapid Recovery", "Heal 1.2% max HP per second.", AdvancedUpgradeRarity.Uncommon, p => p.HealthRegen += p.MaxHealth * 0.012f, "regen"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Greater Magnet", "XP pickup radius x1.75.", AdvancedUpgradeRarity.Uncommon, p => p.MagnetRange *= 1.75f, "magnet"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Heavy Plate", "+5 flat armor.", AdvancedUpgradeRarity.Uncommon, p => p.FlatArmor += 5f, "armor"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Veteran of Battle", "+30% XP gained.", AdvancedUpgradeRarity.Uncommon, p => p.ExperienceMultiplier += 0.3f, "xp_gain"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Fortunate Find", "+35% Luck for rarity rolls.", AdvancedUpgradeRarity.Uncommon, p => p.AddLuck(0.35f), "luck"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Expanded Selection II", "Future level-ups show 5 options.", AdvancedUpgradeRarity.Uncommon, p => p.LevelUpChoiceCount = Mathf.Max(p.LevelUpChoiceCount, 5), "choices"), 1, player != null && player.LevelUpChoiceCount == 4);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Combat Supplies", "10% heal drops for 18% max HP.", AdvancedUpgradeRarity.Uncommon, p => p.SetSupplyTier(0.1f, 0.4f, 0.18f, 1), "supplies"), 1);
 
         AddUpgradeOption(pool, new AdvancedUpgradeOption("Mine Layer", "Drop a mine every 2.5s behind you.", AdvancedUpgradeRarity.Uncommon, p => p.EnableMines()), 1);
         AddUpgradeOption(pool, new AdvancedUpgradeOption("Keen Eye", "+10 percentage points crit chance.", AdvancedUpgradeRarity.Uncommon, p => p.CritChance = Mathf.Min(0.75f, p.CritChance + 0.1f)));
@@ -1322,6 +1365,20 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         bool hasMineAndElement = player != null && player.MineInterval > 0f && hasAnyElement;
         bool hasAllElements = player != null && player.BurnDamagePerSecond > 0f && player.PoisonDamagePerSecond > 0f && player.FreezeDuration > 0f;
 
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Masterwork Weapon", "+70% direct attack damage.", AdvancedUpgradeRarity.Epic, p => p.Damage *= 1.7f, "damage"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Relentless Assault", "Attack interval -40%.", AdvancedUpgradeRarity.Epic, p => p.FireDelay = Mathf.Max(0.15f, p.FireDelay * 0.6f), "fire_rate"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Windrunner", "+35% movement speed.", AdvancedUpgradeRarity.Epic, p => p.MoveSpeed *= 1.35f, "move"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Titan's Vitality", "+60% max HP and full heal.", AdvancedUpgradeRarity.Epic, p => p.IncreaseMaxHealthPercent(0.6f), "health"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Hypervelocity", "+90% projectile speed.", AdvancedUpgradeRarity.Epic, p => p.BulletSpeed *= 1.9f, "projectile_speed"), 1, heroClass != AdvancedPlayerClass.Knight);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Phasing Shots", "Arrows pierce 4 extra enemies.", AdvancedUpgradeRarity.Epic, p => p.PierceCount += 4, "pierce"), 1, heroClass == AdvancedPlayerClass.Archer);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Regenerative Core", "Heal 2.5% max HP per second.", AdvancedUpgradeRarity.Epic, p => p.HealthRegen += p.MaxHealth * 0.025f, "regen"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Gravity Well", "XP radius x2.5 and pickup speed +50%.", AdvancedUpgradeRarity.Epic, p => { p.MagnetRange *= 2.5f; p.XpPickupSpeedMultiplier *= 1.5f; }, "magnet"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Fortress Plate", "+10 flat armor.", AdvancedUpgradeRarity.Epic, p => p.FlatArmor += 10f, "armor"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Master of Battle", "+60% XP gained.", AdvancedUpgradeRarity.Epic, p => p.ExperienceMultiplier += 0.6f, "xp_gain"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Fate's Favor", "+75% Luck for rarity rolls.", AdvancedUpgradeRarity.Epic, p => p.AddLuck(0.75f), "luck"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Expanded Selection III", "Future level-ups show 6 options.", AdvancedUpgradeRarity.Epic, p => p.LevelUpChoiceCount = Mathf.Max(p.LevelUpChoiceCount, 6), "choices"), 1, player != null && player.LevelUpChoiceCount == 5);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Medical Cache", "18% heal drops for 30% max HP.", AdvancedUpgradeRarity.Epic, p => p.SetSupplyTier(0.18f, 1f, 0.3f, 2), "supplies"), 1);
+
         AddUpgradeOption(pool, new AdvancedUpgradeOption("Lightning Rod", "Every 4s, lightning hits and chains.", AdvancedUpgradeRarity.Epic, p => p.ImproveLightning()), 0);
         AddUpgradeOption(pool, new AdvancedUpgradeOption("Explosive Hits", "Direct hits can explode for area damage.", AdvancedUpgradeRarity.Epic, p => p.AddExplosiveHits()), 0);
         AddUpgradeOption(pool, new AdvancedUpgradeOption("Critical Force", "+50 percentage points crit damage.", AdvancedUpgradeRarity.Epic, p => p.CritDamageMultiplier += 0.5f));
@@ -1340,6 +1397,20 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
         AddUpgradeOption(pool, new AdvancedUpgradeOption("Cleave", "Sword swings wider and a little farther.", AdvancedUpgradeRarity.Epic, p => p.AddCleave()), 3, heroClass == AdvancedPlayerClass.Knight);
         AddUpgradeOption(pool, new AdvancedUpgradeOption("Counterattack", "After being hit, your next swing retaliates.", AdvancedUpgradeRarity.Epic, p => p.EnableCounterattack()), 2, heroClass == AdvancedPlayerClass.Knight);
         AddUpgradeOption(pool, new AdvancedUpgradeOption("Whirlwind", "Every 7s, your next swing is circular.", AdvancedUpgradeRarity.Epic, p => p.EnableWhirlwind()), 1, heroClass == AdvancedPlayerClass.Knight);
+
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Godforged Weapon", "+140% direct attack damage.", AdvancedUpgradeRarity.Legendary, p => p.Damage *= 2.4f, "damage"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Timebreaker", "Attack interval -60%.", AdvancedUpgradeRarity.Legendary, p => p.FireDelay = Mathf.Max(0.15f, p.FireDelay * 0.4f), "fire_rate"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Unbound Movement", "+60% movement speed.", AdvancedUpgradeRarity.Legendary, p => p.MoveSpeed *= 1.6f, "move"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Colossus Heart", "+120% max HP and full heal.", AdvancedUpgradeRarity.Legendary, p => p.IncreaseMaxHealthPercent(1.2f), "health"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Lightspeed Rounds", "+180% projectile speed.", AdvancedUpgradeRarity.Legendary, p => p.BulletSpeed *= 2.8f, "projectile_speed"), 1, heroClass != AdvancedPlayerClass.Knight);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Infinite Penetration", "Arrows pierce 8 extra enemies.", AdvancedUpgradeRarity.Legendary, p => p.PierceCount += 8, "pierce"), 1, heroClass == AdvancedPlayerClass.Archer);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Undying Body", "Heal 5% max HP per second.", AdvancedUpgradeRarity.Legendary, p => p.HealthRegen += p.MaxHealth * 0.05f, "regen"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Singularity", "XP radius x4 and pickup speed +100%.", AdvancedUpgradeRarity.Legendary, p => { p.MagnetRange *= 4f; p.XpPickupSpeedMultiplier *= 2f; }, "magnet"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Living Fortress", "+20 flat armor.", AdvancedUpgradeRarity.Legendary, p => p.FlatArmor += 20f, "armor"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Legend of Battle", "+120% XP gained.", AdvancedUpgradeRarity.Legendary, p => p.ExperienceMultiplier += 1.2f, "xp_gain"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Chosen by Fortune", "+150% Luck for rarity rolls.", AdvancedUpgradeRarity.Legendary, p => p.AddLuck(1.5f), "luck"), 1);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Expanded Selection IV", "Future level-ups show 7 options.", AdvancedUpgradeRarity.Legendary, p => p.LevelUpChoiceCount = Mathf.Max(p.LevelUpChoiceCount, 7), "choices"), 1, player != null && player.LevelUpChoiceCount == 6);
+        AddUpgradeOption(pool, new AdvancedUpgradeOption("Divine Provisions", "30% heal drops for 45% max HP.", AdvancedUpgradeRarity.Legendary, p => p.SetSupplyTier(0.3f, 1f, 0.45f, 2), "supplies"), 1);
 
         AddUpgradeOption(pool, new AdvancedUpgradeOption("Stormcaller", "Lightning becomes faster and chains harder.", AdvancedUpgradeRarity.Legendary, p => p.ImproveLightning(true)), 1, player != null && player.LightningInterval > 0f);
         AddUpgradeOption(pool, new AdvancedUpgradeOption("Demolition Expert", "Explosions get 1.5x chance, radius, and damage.", AdvancedUpgradeRarity.Legendary, p => p.AddExplosiveHits(true)), 1, player != null && player.ExplosionChance > 0f);
@@ -1691,24 +1762,27 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
 
     private void DrawLevelUpPanel()
     {
-        Rect panel = CenterRect(820f, 570f);
+        Rect panel = CenterRect(860f, Mathf.Min(760f, Screen.height - 32f));
         GUI.Box(panel, "");
         GUILayout.BeginArea(new Rect(panel.x + 34f, panel.y + 26f, panel.width - 68f, panel.height - 52f));
         GUILayout.Label("Level up! Choose an upgrade", titleStyle, GUILayout.Height(56f));
         GUILayout.Space(8f);
 
+        float optionSpacing = levelChoices.Count >= 6 ? 6f : 10f;
+        float availableHeight = Mathf.Max(260f, panel.height - 130f);
+        float optionHeight = levelChoices.Count > 0 ? Mathf.Clamp((availableHeight - optionSpacing * (levelChoices.Count - 1)) / levelChoices.Count, 72f, 116f) : 116f;
         for (int i = 0; i < levelChoices.Count; i++)
         {
             AdvancedUpgradeOption upgrade = levelChoices[i];
             Color oldColor = GUI.backgroundColor;
             GUI.backgroundColor = upgrade.RarityColor;
-            if (GUILayout.Button(upgrade.RarityName + " - " + upgrade.Title + "\n" + upgrade.Description, optionButtonStyle, GUILayout.Height(116f)))
+            if (GUILayout.Button(upgrade.RarityName + " - " + upgrade.Title + "\n" + upgrade.Description, optionButtonStyle, GUILayout.Height(optionHeight)))
             {
                 ApplyUpgrade(upgrade);
             }
 
             GUI.backgroundColor = oldColor;
-            GUILayout.Space(10f);
+            GUILayout.Space(optionSpacing);
         }
 
         GUILayout.EndArea();
@@ -1801,6 +1875,9 @@ internal sealed class AdvancedGameWorld : MonoBehaviour
             DrawStatLine("Move speed", FormatNumber(player.MoveSpeed));
             DrawStatLine("Dash cooldown", FormatNumber(player.DashCooldown) + "s");
             DrawStatLine("XP gain", Mathf.RoundToInt(player.ExperienceMultiplier * 100f) + "%");
+            DrawStatLine("Luck", "+" + Mathf.RoundToInt(player.Luck * 100f) + "%");
+            DrawStatLine("Upgrade options", player.LevelUpChoiceCount.ToString());
+            DrawStatLine("XP pull speed", Mathf.RoundToInt(player.XpPickupSpeedMultiplier * 100f) + "%");
             GUILayout.Space(10f);
 
             GUILayout.Label("Defense", panelHeaderStyle, GUILayout.Height(32f));
@@ -1952,6 +2029,7 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
     private float bulletScale = 1f;
     private int spellCounter;
     private bool isDrawing;
+    private bool facingLeft;
 
     public float MoveSpeed { get; set; }
     public float Damage { get; set; }
@@ -1989,8 +2067,13 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
     public float MagicRange { get; set; }
     public float MagicExplosionRadius { get; set; }
     public float ExperienceMultiplier { get; set; }
+    public float Luck { get; set; }
+    public int LevelUpChoiceCount { get; set; }
+    public float XpPickupSpeedMultiplier { get; set; }
     public float FieldRationsDropChance { get; set; }
+    public float FieldRationsEliteDropChance { get; set; }
     public float FieldRationsHealPercent { get; set; }
+    public int BossHealthDropCount { get; set; }
     public float ExecutionerBonus { get; set; }
     public float GiantSlayerBonus { get; set; }
     public float EliteDamageReduction { get; set; }
@@ -2058,8 +2141,13 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
         MagicRange = 5.7f;
         MagicExplosionRadius = 1.25f;
         ExperienceMultiplier = 1f;
+        Luck = 0f;
+        LevelUpChoiceCount = 3;
+        XpPickupSpeedMultiplier = 1f;
         FieldRationsDropChance = 0f;
+        FieldRationsEliteDropChance = 0f;
         FieldRationsHealPercent = 0f;
+        BossHealthDropCount = 1;
         ExecutionerBonus = 0f;
         GiantSlayerBonus = 0f;
         EliteDamageReduction = 0f;
@@ -2181,6 +2269,15 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
         if (Input.GetKey(KeyCode.D)) input.x += 1f;
         if (Input.GetKey(KeyCode.A)) input.x -= 1f;
         if (input.sqrMagnitude > 1f) input.Normalize();
+        if (input.x < -0.05f)
+        {
+            facingLeft = true;
+        }
+        else if (input.x > 0.05f)
+        {
+            facingLeft = false;
+        }
+
         if (input.sqrMagnitude > 0.05f)
         {
             lastMoveDirection = input.normalized;
@@ -2221,7 +2318,7 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
 
     private float WeaponRotationOffset()
     {
-        return playerClass == AdvancedPlayerClass.Archer ? 180f : -90f;
+        return playerClass == AdvancedPlayerClass.Mage ? -90f : 0f;
     }
 
     private void HandleShooting()
@@ -2444,6 +2541,7 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
 
         int frame = Mathf.FloorToInt(Time.time * (animation == AdvancedHeroAnimation.Walk ? 8f : 10f));
         spriteRenderer.sprite = AdvancedGameArt.HeroSprite(playerClass, animation, frame);
+        spriteRenderer.flipX = facingLeft;
 
         if (weaponRenderer != null)
         {
@@ -2730,7 +2828,21 @@ internal sealed class AdvancedPlayerController : MonoBehaviour
     public void ImproveFieldRations()
     {
         FieldRationsDropChance += FieldRationsDropChance <= 0f ? 0.04f : 0.02f;
+        FieldRationsEliteDropChance = Mathf.Max(FieldRationsEliteDropChance, 0.2f);
         FieldRationsHealPercent += FieldRationsHealPercent <= 0f ? 0.1f : 0.02f;
+    }
+
+    public void SetSupplyTier(float normalDropChance, float eliteDropChance, float healPercent, int bossDropCount)
+    {
+        FieldRationsDropChance = Mathf.Max(FieldRationsDropChance, normalDropChance);
+        FieldRationsEliteDropChance = Mathf.Max(FieldRationsEliteDropChance, eliteDropChance);
+        FieldRationsHealPercent = Mathf.Max(FieldRationsHealPercent, healPercent);
+        BossHealthDropCount = Mathf.Max(BossHealthDropCount, bossDropCount);
+    }
+
+    public void AddLuck(float amount)
+    {
+        Luck = Mathf.Min(3f, Luck + amount);
     }
 
     public void ImproveShockwave()
@@ -3219,7 +3331,7 @@ internal sealed class AdvancedXpPickup : MonoBehaviour
         if (distance <= world.Player.MagnetRange)
         {
             float speed = Mathf.Lerp(6f, 15f, 1f - distance / Mathf.Max(0.1f, world.Player.MagnetRange));
-            transform.position += (Vector3)(toPlayer.normalized * speed * Time.deltaTime);
+            transform.position += (Vector3)(toPlayer.normalized * speed * world.Player.XpPickupSpeedMultiplier * Time.deltaTime);
         }
     }
 }
@@ -3533,6 +3645,7 @@ internal sealed class AdvancedUpgradeOption
     public readonly string Description;
     public readonly AdvancedUpgradeRarity Rarity;
     public readonly Action<AdvancedPlayerController> Apply;
+    public readonly string Family;
 
     public float Weight
     {
@@ -3567,12 +3680,13 @@ internal sealed class AdvancedUpgradeOption
         }
     }
 
-    public AdvancedUpgradeOption(string title, string description, AdvancedUpgradeRarity rarity, Action<AdvancedPlayerController> apply)
+    public AdvancedUpgradeOption(string title, string description, AdvancedUpgradeRarity rarity, Action<AdvancedPlayerController> apply, string family = null)
     {
         Title = title;
         Description = description;
         Rarity = rarity;
         Apply = apply;
+        Family = family;
     }
 }
 
@@ -3704,15 +3818,15 @@ internal static class AdvancedGameArt
 
     private static Sprite PixelCrawlerRegion(string key, string relativePath, int x, int yFromTop, int width, int height, float pixelsPerUnit, Vector2 pivot)
     {
-        string cacheKey = "pc-region-" + key + "-" + x + "-" + yFromTop + "-" + width + "-" + height;
-        Sprite sprite;
-        if (SpriteCache.TryGetValue(cacheKey, out sprite)) return sprite;
-
         Texture2D texture = LoadPixelCrawlerTexture(relativePath);
         if (texture == null)
         {
             return null;
         }
+
+        string cacheKey = "pc-region-" + key + "-" + x + "-" + yFromTop + "-" + width + "-" + height;
+        Sprite sprite;
+        if (SpriteCache.TryGetValue(cacheKey, out sprite)) return sprite;
 
         Rect rect = new Rect(x, texture.height - yFromTop - height, width, height);
         sprite = Sprite.Create(texture, rect, pivot, pixelsPerUnit);
@@ -3941,6 +4055,12 @@ internal static class AdvancedGameArt
 
     public static Sprite WeaponSprite(AdvancedPlayerClass heroClass, int frame)
     {
+        Sprite assetSprite = WeaponAssetSprite(heroClass, frame);
+        if (assetSprite != null)
+        {
+            return assetSprite;
+        }
+
         string key = "weapon-" + heroClass + "-" + frame;
         Sprite sprite;
         if (SpriteCache.TryGetValue(key, out sprite)) return sprite;
@@ -3990,6 +4110,21 @@ internal static class AdvancedGameArt
         sprite = Sprite.Create(texture, new Rect(0f, 0f, 64f, 64f), new Vector2(0.5f, 0.5f), 64f);
         SpriteCache[key] = sprite;
         return sprite;
+    }
+
+    private static Sprite WeaponAssetSprite(AdvancedPlayerClass heroClass, int frame)
+    {
+        switch (heroClass)
+        {
+            case AdvancedPlayerClass.Knight:
+                return PixelCrawlerRegion("weapon-knight-wood-sword", "Weapons/Wood/Wood.png", 32, 0, 16, 16, 16f, new Vector2(0.18f, 0.5f));
+            case AdvancedPlayerClass.Mage:
+                return PixelCrawlerRegion("weapon-mage-wood-staff", "Weapons/Wood/Wood.png", 96, 16, 16, 48, 24f, new Vector2(0.5f, 0.18f));
+            default:
+                int bowFrame = Mathf.Abs(frame) % 2;
+                int x = bowFrame == 0 ? 48 : 64;
+                return PixelCrawlerRegion("weapon-archer-wood-bow-" + bowFrame, "Weapons/Wood/Wood.png", x, 48, 16, 32, 24f, new Vector2(0.5f, 0.5f));
+        }
     }
 
     public static Sprite PlayerProjectileSprite(AdvancedProjectileKind kind)
